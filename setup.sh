@@ -7,7 +7,7 @@
 #   ./setup.sh env          apt packages, HF_HOME, directories
 #   ./setup.sh node         clone + install the DreamID-V wrapper
 #   ./setup.sh models       download the three model files
-#   ./setup.sh facerestore  CodeFormer / GFPGAN for cleaning source photos
+#   ./setup.sh facerestore  CodeFormer / GFPGAN + Real-ESRGAN upscalers
 #   ./setup.sh restart      restart ComfyUI and check the log
 #
 # Safe to re-run. Downloads and clones are skipped if already present.
@@ -118,7 +118,7 @@ do_env() {
 
   mkdir -p "$WORKSPACE"/{input,output,tmp} \
            "$COMFY_DIR"/models/{diffusion_models,vae,text_encoders} \
-           "$COMFY_DIR"/models/{facerestore_models,facedetection} \
+           "$COMFY_DIR"/models/{facerestore_models,facedetection,upscale_models} \
            "$COMFY_DIR"/input
   ok "directories"
 
@@ -307,8 +307,21 @@ do_facerestore() {
         "$COMFY_DIR/models/facedetection/parsing_parsenet.pth" \
         50000000 "parsing_parsenet.pth" || true
 
+  # Real-ESRGAN, for lifting the swapped clip back to the plate's resolution.
+  # No custom node needed -- ComfyUI ships "Load Upscale Model" and
+  # "Upscale Image (using Model)" natively. ~130MB for both.
+  fetch "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth" \
+        "$COMFY_DIR/models/upscale_models/RealESRGAN_x2plus.pth" \
+        50000000 "RealESRGAN_x2plus.pth" || true
+
+  fetch "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth" \
+        "$COMFY_DIR/models/upscale_models/RealESRGAN_x4plus.pth" \
+        50000000 "RealESRGAN_x4plus.pth" || true
+
   printf '\n'
-  ls -lh "$COMFY_DIR"/models/facerestore_models/ "$COMFY_DIR"/models/facedetection/ 2>/dev/null || true
+  ls -lh "$COMFY_DIR"/models/facerestore_models/ \
+         "$COMFY_DIR"/models/facedetection/ \
+         "$COMFY_DIR"/models/upscale_models/ 2>/dev/null || true
 }
 
 # ----------------------------------------------------------------------------

@@ -44,7 +44,7 @@ Roughly 15–25 minutes, mostly the 11 GB text encoder download.
 | `env` | `tmux` + `ffmpeg` + `curl`, sets `HF_HOME`, creates directories |
 | `node` | Clones the DreamID-V wrapper, installs its deps **plus the ones it forgets** |
 | `models` | Downloads the three model files (~18 GB) and applies the required rename |
-| `facerestore` | CodeFormer + GFPGAN for cleaning up low-res source photos (~700 MB) |
+| `facerestore` | CodeFormer + GFPGAN for source photos, plus Real-ESRGAN upscalers (~830 MB) |
 | `restart` | `supervisorctl restart comfyui`, then greps the log to confirm the node loaded |
 
 Run a single phase if you need to:
@@ -207,6 +207,32 @@ and right.
 
 > Worth trying the raw photo on a test clip first. DreamID-V has its own
 > identity encoder and may handle a soft source better than expected.
+
+## Upscaling the output
+
+DreamID-V renders at 480p or 720p. If your plate is 1080p, the swapped clip
+comes back smaller than the footage around it.
+
+`RealESRGAN_x2plus.pth` and `RealESRGAN_x4plus.pth` are downloaded to
+`models/upscale_models/`. **No custom node needed** — ComfyUI ships the nodes:
+
+```
+VHS_VideoCombine ← Upscale Image (using Model) ← [sampler output]
+                              ↑
+                   Load Upscale Model (RealESRGAN_x2plus)
+```
+
+720p × 2 gives 1440p; let your editor scale down to 1080p. Upscaling past the
+target and then reducing beats going straight to it.
+
+> ### Match the plate, don't beat it
+>
+> A swapped face sharper than the footage around it is the classic tell. If
+> your surrounding shots are soft, **the swap should be soft too**. Upscaling
+> here is about matching resolution, not adding detail.
+>
+> If you're grading to grain, you may not need this at all — let the editor
+> scale it and let grain cover the difference.
 
 ## Running a swap
 
