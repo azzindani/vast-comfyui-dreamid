@@ -384,6 +384,40 @@ find /workspace/ComfyUI/custom_nodes/Comfyui_DreamID-V_wrapper -name "*.json"
 pipeline runs end to end — resolution, VRAM, output format. A failed
 18-second render wastes far more than a failed 2-second one.
 
+### Clips longer than the frame window
+
+Wan-family models have a fixed window — **81 frames**, about 3.4 seconds at
+24fps. Anything longer renders in passes.
+
+Keep frame counts to **4n+1** (41, 61, 81). The VAE compresses time 4×, so
+other counts get padded or rejected, and padded tail frames come back mangled.
+
+Rather than editing `skip_first_frames` by hand for each pass:
+
+```bash
+# Workflow > Export (API) in ComfyUI first — the normal save is UI format
+
+python scripts/queue-chunks.py workflow_api.json --total 216 --dry-run
+python scripts/queue-chunks.py workflow_api.json --total 216
+```
+
+Plans overlapping chunks, sets the frame cap (following a link to an
+`INTConstant` if one drives it), and queues them all with per-chunk output
+prefixes. Omit `--total` to probe the clip with ffprobe.
+
+Chunks are spaced **evenly** rather than stepped-and-clamped, so you never pay
+for a final pass that overlaps its predecessor almost entirely. The default
+13-frame overlap gives you something to cross-dissolve across — without it,
+every join is a hard cut that pops.
+
+> **Cuts are free seams.** If a long shot contains an edit, split there instead
+> of chunking through it. Each piece may then fit in a single pass.
+
+> **Audio: use one unbroken track.** Let the chunks render silent and lay the
+> original clip's audio under the joined result in your editor. DreamID-V
+> preserves the actor's mouth movement, so it stays in sync — and you avoid
+> accumulating offsets across three separate sync points.
+
 ---
 
 ## Wan 2.2 Animate — optional
