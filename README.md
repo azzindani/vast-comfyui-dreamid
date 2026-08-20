@@ -24,7 +24,8 @@ video clips, with the lip-sync and enhancement passes as planned extensions.
 **3. On the instance:**
 
 ```bash
-git clone https://github.com/YOURNAME/vast-comfyui-dreamid
+cd /workspace
+git clone https://github.com/azzindani/vast-comfyui-dreamid
 cd vast-comfyui-dreamid
 chmod +x setup.sh scripts/*.sh
 ./setup.sh
@@ -70,7 +71,7 @@ reload them.
 the running process alone:
 
 ```bash
-git pull && ./setup.sh nodes
+cd /workspace/vast-comfyui-dreamid && git pull && ./setup.sh nodes
 ```
 
 Use this mid-session. Anything imported at *render* time (`decord`) takes
@@ -79,7 +80,7 @@ effect on your next queued prompt with no restart at all.
 **With a restart** — adds model verification and the auto-heal loop:
 
 ```bash
-git pull && ./setup.sh doctor
+cd /workspace/vast-comfyui-dreamid && git pull && ./setup.sh doctor
 ```
 
 Required for newly cloned nodes to appear in the UI, since custom nodes only
@@ -150,7 +151,7 @@ Queue depth, GPU utilisation, the last five renders, disk free.
 
 | Setting | Value | Why |
 |---|---|---|
-| GPU | RTX 4090 24 GB | DreamID-V ~16 GB, LatentSync ~18 GB — they run sequentially |
+| GPU | RTX 4090 24 GB | Fits DreamID-V's ~16 GB at an 81-frame window. More VRAM buys resolution, not longer clips — the 81-frame limit is Wan's training window |
 | Disk | **100–200 GB** | **Not resizable after launch** |
 | Reliability | > 99 % | Host-specific on vast, not platform-wide |
 | Internet | > 500 Mbps down | You pay GPU rates while pulling 18 GB |
@@ -163,7 +164,7 @@ Sort by **DLPerf**, not price — the same GPU model varies with cooling and pow
 ### Three ways to lose money
 
 1. **Disk is not resizable.** Running out mid-download means destroying and starting over.
-2. **Stopped ≠ free.** Storage bills continuously while the instance *exists*. **Destroy** it when finished, don't just stop it.
+2. **Stopped ≠ free.** Storage bills continuously while the instance *exists*. When the project is **finished**, destroy it — a stopped instance you forget about bills indefinitely. Mid-project, see [Leaving it overnight](#leaving-it-overnight) below; stopping is usually right there.
 3. **A slow host costs more than a pricier fast one.** 18 GB at 100 Mbps is ~25 minutes of paid GPU time.
 
 ### Leaving it overnight
