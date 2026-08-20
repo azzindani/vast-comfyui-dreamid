@@ -9,6 +9,7 @@
 #   ./setup.sh models       DreamID-V weights (~18GB)
 #   ./setup.sh enhance      face restore, upscalers, interpolation (~1GB)
 #   ./setup.sh restart      restart ComfyUI, confirm nodes loaded
+#   ./setup.sh paths        show where ComfyUI actually reads/writes files
 #
 #   ./setup.sh wan          OPTIONAL: Wan 2.2 Animate (~20GB more). Not in `all`.
 #
@@ -64,6 +65,42 @@ torch_version() {
 # have_file <path> <min_bytes>
 have_file() {
   [ -f "$1" ] && [ "$(stat -c%s "$1" 2>/dev/null || echo 0)" -ge "$2" ]
+}
+
+# Where ComfyUI actually reads and writes. Templates often relocate these with
+# --input-directory / --output-directory, so never assume $COMFY_DIR/input.
+# Sets COMFY_IN, COMFY_OUT, COMFY_TMP.
+comfy_paths() {
+  local cmd
+  cmd=$(ps aux 2>/dev/null | grep "[m]ain\.py" | head -1 || true)
+
+  COMFY_IN=$(sed -n 's/.*--input-directory[= ]\([^ ]*\).*/\1/p'  <<<"$cmd")
+  COMFY_OUT=$(sed -n 's/.*--output-directory[= ]\([^ ]*\).*/\1/p' <<<"$cmd")
+  COMFY_TMP=$(sed -n 's/.*--temp-directory[= ]\([^ ]*\).*/\1/p'   <<<"$cmd")
+
+  COMFY_IN="${COMFY_IN:-$COMFY_DIR/input}"
+  COMFY_OUT="${COMFY_OUT:-$COMFY_DIR/output}"
+  COMFY_TMP="${COMFY_TMP:-$COMFY_DIR/temp}"
+}
+
+do_paths() {
+  phase "ComfyUI paths"
+  comfy_paths
+  mkdir -p "$COMFY_IN" "$COMFY_OUT"
+  printf '  put clips and images here   %s\n' "$COMFY_IN"
+  printf '  finished renders land here  %s\n' "$COMFY_OUT"
+  printf '  scratch (wiped on restart)  %s\n' "$COMFY_TMP"
+  cat <<EOF
+
+  Two things that bite people:
+
+    * scp into the input dir and the LoadImage dropdown will NOT show the file
+      until you hit Refresh in the ComfyUI menu. The list is cached.
+
+    * PreviewImage writes to temp/, not output/. Same for VHS_VideoCombine
+      when save_output is unchecked. Use SaveImage, and TICK save_output on
+      VideoCombine, or your render is discarded on the next restart.
+EOF
 }
 
 # fetch <url> <dest> <min_bytes> <label>
@@ -147,11 +184,12 @@ do_env() {
     echo "export HF_HOME=$WORKSPACE/hf_cache" >> ~/.bashrc
   ok "HF_HOME=$HF_HOME"
 
-  mkdir -p "$WORKSPACE"/{input,output,tmp} \
-           "$COMFY_DIR"/models/{diffusion_models,vae,text_encoders,loras} \
-           "$COMFY_DIR"/models/{facerestore_models,facedetection,upscale_models} \
-           "$COMFY_DIR"/input
-  ok "directories"
+  # Model dirs only. Input/output are resolved from ComfyUI's actual launch
+  # args in do_paths -- creating /workspace/{input,output} here would just
+  # invent folders nothing reads from.
+  mkdir -p "$COMFY_DIR"/models/{diffusion_models,vae,text_encoders,loras} \
+           "$COMFY_DIR"/models/{facerestore_models,facedetection,upscale_models}
+  ok "model directories"
 
   step "huggingface_hub CLI"
   pip install -q -U "huggingface_hub[cli]"
@@ -374,6 +412,7 @@ do_all() {
   do_models
   do_enhance
   do_restart
+  do_paths
 
   phase "Ready"
   cat <<EOF
@@ -398,8 +437,8 @@ do_all() {
     4. download, then DESTROY the instance
 
   Optional: ./setup.sh wan      Wan 2.2 Animate, ~20GB more
+            ./setup.sh paths    re-print the input/output paths above
 
-  Put images and clips in $COMFY_DIR/input/
   Nothing leaves this machine.
 EOF
 }
@@ -413,5 +452,6 @@ case "${1:-all}" in
   enhance)  do_enhance ;;
   wan)      do_wan ;;
   restart)  do_restart ;;
-  *)        die "unknown phase '$1' (all|verify|env|nodes|models|enhance|wan|restart)" ;;
+  paths)    do_paths ;;
+  *)        die "unknown phase '$1' (all|verify|env|nodes|models|enhance|wan|restart|paths)" ;;
 esac

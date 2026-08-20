@@ -49,6 +49,20 @@ for m in flash_attn sageattention; do
 done
 
 echo
+echo "--- comfyui paths ---"
+# Templates relocate these with --input-directory / --output-directory, so read
+# them off the running process rather than assuming.
+CMD=$(ps aux 2>/dev/null | grep "[m]ain\.py" | head -1)
+IN=$(sed -n 's/.*--input-directory[= ]\([^ ]*\).*/\1/p'  <<<"$CMD")
+OUT=$(sed -n 's/.*--output-directory[= ]\([^ ]*\).*/\1/p' <<<"$CMD")
+printf '  input:  %s\n' "${IN:-$COMFY_DIR/input}"
+printf '  output: %s\n' "${OUT:-$COMFY_DIR/output}"
+echo "  recent files (last 60 min):"
+find "${IN:-$COMFY_DIR/input}" "${OUT:-$COMFY_DIR/output}" "$COMFY_DIR/temp" \
+     -newermt '-60 minutes' -type f 2>/dev/null | head -10 | sed 's/^/    /' \
+  || echo "    none"
+
+echo
 echo "--- services ---"
 if command -v supervisorctl >/dev/null; then
   supervisorctl status 2>&1 | grep -E "comfyui|caddy" || echo "  none found"
