@@ -46,7 +46,7 @@ Roughly 15–25 minutes, mostly the 11 GB text encoder download.
 | `models` | DreamID-V weights (~18 GB), with the required rename applied |
 | `enhance` | Face restore, upscalers, RIFE interpolation (~1 GB) |
 | `restart` | `supervisorctl restart comfyui`, then greps the log to confirm nodes loaded |
-| `paths` | Prints where ComfyUI *actually* reads/writes (read-only) |
+| `paths` | Resolves the real input/output dirs, links them to `/workspace`, lists recent renders |
 | `doctor` | **Finds and fixes** missing models and failed imports |
 | `wan` | **Optional, not in `all`** — Wan 2.2 Animate (~20 GB more) |
 
@@ -59,12 +59,42 @@ Run a single phase if you need to:
 ./setup.sh restart
 ```
 
+## Refreshing an existing install
+
+After a `git pull`, or when a node turns out to be missing. Which one you want
+depends on whether you can afford a restart — ComfyUI caches the ~18 GB of
+model weights in the running process, and a restart costs ~90 seconds to
+reload them.
+
+**Without restarting** — clones new nodes, installs missing packages, leaves
+the running process alone:
+
+```bash
+git pull && ./setup.sh nodes
+```
+
+Use this mid-session. Anything imported at *render* time (`decord`) takes
+effect on your next queued prompt with no restart at all.
+
+**With a restart** — adds model verification and the auto-heal loop:
+
+```bash
+git pull && ./setup.sh doctor
+```
+
+Required for newly cloned nodes to appear in the UI, since custom nodes only
+register at startup.
+
+> If a render is queued or your models are still hot, run `nodes` and keep
+> working. Save `doctor` for a moment when a restart is cheap.
+
 ## What gets installed
 
 | | Purpose |
 |---|---|
 | **DreamID-V** | Video face swap — diffusion-based, so no frame-to-frame flicker |
 | **VideoHelperSuite** | Video load/combine, plus the inline player on the output node |
+| **KJNodes** | Not a DreamID-V dependency, but its example workflow is built from these |
 | **facerestore_cf** | CodeFormer / GFPGAN for cleaning up low-res source photos |
 | **Frame-Interpolation** | RIFE — smooth slow-motion without retiming judder |
 | **Upscalers** | RealESRGAN x2/x4 and 4x-UltraSharp (ComfyUI's nodes are native) |
@@ -132,7 +162,7 @@ Sort by **DLPerf**, not price — the same GPU model varies with cooling and pow
 
 ## Gotchas this repo handles for you
 
-These are the four things that actually cost time, none of which appear in any
+These are the things that actually cost time, none of which appear in any
 published guide.
 
 ### 1. Tunnel to 18188, not 8188
@@ -174,20 +204,68 @@ easydict diffusers transformers accelerate sentencepiece ftfy
 omegaconf einops imageio-ffmpeg av
 ```
 
+### 5. `decord` fails *mid-render*, not at startup
+
+The sampler does `from decord import VideoReader` inside `generate()`, not at
+module load. So a missing `decord` passes every startup check, loads all 18 GB
+of weights, and *then* throws — about 90 seconds into a render.
+
+`setup.sh` installs it during `nodes` and verifies it in `doctor`. Because the
+import is lazy, installing it needs **no restart** — just re-queue.
+
+### 6. A half-finished clone reads as "installed"
+
+An interrupted `git clone` leaves a `.git` directory with no `__init__.py`.
+Every "is it already installed?" check that looks for the directory says yes,
+and the node stays permanently broken. `setup.sh` checks for `__init__.py` and
+re-clones when it's missing.
+
 ---
 
-## Attention backend — leave it alone
+## Where your files go
+
+ComfyUI reads and writes under its own directory — `/workspace/ComfyUI/input`
+and `/workspace/ComfyUI/output`, not the workspace root. `./setup.sh paths`
+symlinks `/workspace/input` and `/workspace/output` to the real locations so
+either path works, and lists everything written in the last two hours.
+
+A render that seems to have vanished is almost always in `temp/`:
+
+| Node | Writes to |
+|---|---|
+| `SaveImage` | `output/` |
+| `PreviewImage` | `temp/` — it's a preview, not a save |
+| `VHS_VideoCombine` | `output/` **only if `save_output` is ticked**, else `temp/` |
+
+`temp/` is wiped on every ComfyUI restart, so a render left there disappears
+the next time `doctor` runs.
+
+Also: after `scp`-ing into the input dir, hit **Refresh** in the ComfyUI menu
+or the `LoadImage` dropdown won't list the file. The list is cached.
+
+---
+
+## Attention backend
 
 The wrapper wraps `flash_attn` / `sageattention` imports in
-`try/except ModuleNotFoundError` and falls back to **SDPA**. Nothing breaks
-from their absence.
+`try/except ModuleNotFoundError` and falls back to **SDPA**, so nothing breaks
+if they're absent.
 
-**Do not install them.** No cu130 prebuilt wheels exist, and building
-flash-attn from source costs 30–60 minutes of paid GPU time for maybe 10–20 %
-on a job measured in minutes. SDPA in torch 2.10 is well optimised.
+**Don't build them from source.** No cu130 prebuilt wheels exist for
+flash-attn, and compiling costs 30–60 minutes of paid GPU time for maybe
+10–20 % on a job measured in minutes. SDPA in torch 2.10 is well optimised.
 
-If a node exposes an attention dropdown, set it to `sdpa` explicitly rather
-than `auto`.
+Some vast templates *do* ship `sageattention`, in which case the wrapper picks
+it automatically and the log reads:
+
+```
+Setting attention mode: sageattn
+Available backends - Flash Attn: False, SageAttn: True
+```
+
+That's fine — sage is meaningfully faster. But if a render fails **inside the
+sampling loop** with a shape or kernel error, set the sampler's attention
+dropdown to `sdpa` and re-queue. Don't pre-emptively switch.
 
 ---
 
