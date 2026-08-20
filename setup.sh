@@ -10,6 +10,7 @@
 #   ./setup.sh enhance      face restore, upscalers, interpolation (~1GB)
 #   ./setup.sh restart      restart ComfyUI, confirm nodes loaded
 #   ./setup.sh paths        show where ComfyUI actually reads/writes files
+#   ./setup.sh doctor       find AND FIX missing models + failed imports
 #
 #   ./setup.sh wan          OPTIONAL: Wan 2.2 Animate (~20GB more). Not in `all`.
 #
@@ -371,6 +372,98 @@ do_wan() {
 }
 
 # ----------------------------------------------------------------------------
+# doctor — find and fix what's missing, without you reading logs
+#
+# Custom node requirements.txt files are routinely incomplete, and each missing
+# module only surfaces one at a time across separate restarts. This automates
+# that loop: restart, read the new log lines, pip install whatever failed to
+# import, repeat until clean.
+# ----------------------------------------------------------------------------
+
+# Import name -> pip name, where they differ.
+declare -A PIP_ALIAS=(
+  [cv2]=opencv-python  [PIL]=Pillow          [skimage]=scikit-image
+  [sklearn]=scikit-learn [yaml]=PyYAML       [Crypto]=pycryptodome
+  [git]=GitPython      [onnxruntime]=onnxruntime-gpu
+  [dateutil]=python-dateutil [pkg_resources]=setuptools
+)
+
+do_doctor() {
+  phase "Doctor"
+
+  # --- models --------------------------------------------------------------
+  step "checking models"
+  local missing_models=0
+  local -A want=(
+    ["models/diffusion_models/dreamidv.pth"]=$SZ_DREAMIDV
+    ["models/vae/Wan2.1_VAE.pth"]=$SZ_VAE
+    ["models/text_encoders/umt5-xxl-enc-bf16.pth"]=$SZ_UMT5
+    ["models/facerestore_models/codeformer.pth"]=300000000
+    ["models/facedetection/detection_Resnet50_Final.pth"]=100000000
+    ["models/upscale_models/RealESRGAN_x2plus.pth"]=50000000
+  )
+  for f in "${!want[@]}"; do
+    if have_file "$COMFY_DIR/$f" "${want[$f]}"; then
+      ok "$(basename "$f")"
+    else
+      warn "missing or truncated: $f"
+      missing_models=1
+    fi
+  done
+
+  if [ "$missing_models" -eq 1 ]; then
+    step "re-running downloads (idempotent — present files are skipped)"
+    do_models
+    do_enhance
+  fi
+
+  # --- modules -------------------------------------------------------------
+  if ! command -v supervisorctl >/dev/null || ! supervisorctl status comfyui >/dev/null 2>&1; then
+    warn "ComfyUI not supervisor-managed — cannot auto-heal imports"
+    return 0
+  fi
+  [ -f "$COMFY_LOG" ] || { warn "no log at $COMFY_LOG"; return 0; }
+
+  local attempt offset missing pkg pkgs
+  for attempt in 1 2 3 4 5; do
+    # Only read lines produced by THIS restart — the log accumulates, so old
+    # errors would otherwise be re-detected forever.
+    offset=$(wc -l < "$COMFY_LOG")
+    step "restart $attempt/5"
+    supervisorctl restart comfyui >/dev/null
+    sleep 25
+
+    missing=$(tail -n +$((offset + 1)) "$COMFY_LOG" \
+              | grep -oP "No module named '\K[^']+" \
+              | cut -d. -f1 | sort -u || true)
+
+    if [ -z "$missing" ]; then
+      ok "all nodes imported cleanly"
+      break
+    fi
+
+    pkgs=""
+    for pkg in $missing; do
+      pkgs="$pkgs ${PIP_ALIAS[$pkg]:-$pkg}"
+    done
+    step "installing:$pkgs"
+
+    local before after
+    before=$(torch_version)
+    # shellcheck disable=SC2086
+    pip install -q $pkgs 2>/dev/null || warn "some of$pkgs would not install"
+    after=$(torch_version)
+    [ "$before" = "$after" ] || \
+      die "torch changed: '$before' -> '$after'. One of$pkgs downgraded it."
+
+    [ "$attempt" -eq 5 ] && warn "still failing after 5 rounds — inspect: tail -50 $COMFY_LOG"
+  done
+
+  grep -E "IMPORT FAILED" "$COMFY_LOG" | tail -3 || true
+  do_paths
+}
+
+# ----------------------------------------------------------------------------
 # restart — ComfyUI is supervisor-managed; never run main.py by hand
 # ----------------------------------------------------------------------------
 
@@ -438,6 +531,7 @@ do_all() {
 
   Optional: ./setup.sh wan      Wan 2.2 Animate, ~20GB more
             ./setup.sh paths    re-print the input/output paths above
+            ./setup.sh doctor   auto-fix missing models and failed imports
 
   Nothing leaves this machine.
 EOF
@@ -453,5 +547,6 @@ case "${1:-all}" in
   wan)      do_wan ;;
   restart)  do_restart ;;
   paths)    do_paths ;;
-  *)        die "unknown phase '$1' (all|verify|env|nodes|models|enhance|wan|restart|paths)" ;;
+  doctor)   do_doctor ;;
+  *)        die "unknown phase '$1' (all|verify|env|nodes|models|enhance|wan|restart|paths|doctor)" ;;
 esac

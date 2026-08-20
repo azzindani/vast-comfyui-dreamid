@@ -46,6 +46,8 @@ Roughly 15–25 minutes, mostly the 11 GB text encoder download.
 | `models` | DreamID-V weights (~18 GB), with the required rename applied |
 | `enhance` | Face restore, upscalers, RIFE interpolation (~1 GB) |
 | `restart` | `supervisorctl restart comfyui`, then greps the log to confirm nodes loaded |
+| `paths` | Prints where ComfyUI *actually* reads/writes (read-only) |
+| `doctor` | **Finds and fixes** missing models and failed imports |
 | `wan` | **Optional, not in `all`** — Wan 2.2 Animate (~20 GB more) |
 
 Run a single phase if you need to:
@@ -72,11 +74,33 @@ file-size checks to catch truncated downloads.
 
 ---
 
+## When something breaks
+
+```bash
+./setup.sh doctor
+```
+
+Does the diagnosing *and* the fixing:
+
+1. Verifies every expected model is present and not truncated; re-downloads any that aren't (skipping the ones already there)
+2. Restarts ComfyUI, reads only the **new** log lines, `pip install`s whatever failed to import, and repeats — up to 5 rounds
+3. Aborts if any install downgrades torch
+4. Prints the real input/output paths
+
+This automates the loop where node `requirements.txt` files are incomplete and
+each missing module only surfaces one restart at a time.
+
+Import names are mapped to pip names where they differ (`cv2` →
+`opencv-python`, `skimage` → `scikit-image`, and so on).
+
 ## Health check
 
 ```bash
 ./scripts/health.sh
 ```
+
+Read-only. Reports torch, GPU, disk, models, attention backend, services,
+ports, the real I/O paths, and anything written in the last hour.
 
 Reports torch and CUDA, GPU memory, disk, model presence, attention backend,
 supervisor services, listening ports, and whether the node imported.
