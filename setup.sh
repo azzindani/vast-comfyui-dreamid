@@ -31,13 +31,18 @@ MIN_DISK_GB="${MIN_DISK_GB:-60}"
 NODES=(
   "Comfyui_DreamID-V_wrapper|https://github.com/TTPlanetPig/Comfyui_DreamID-V_wrapper"
   "ComfyUI-VideoHelperSuite|https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
+  "ComfyUI-KJNodes|https://github.com/kijai/ComfyUI-KJNodes"
   "facerestore_cf|https://github.com/mav-rik/facerestore_cf"
   "ComfyUI-Frame-Interpolation|https://github.com/Fannovel16/ComfyUI-Frame-Interpolation"
 )
 
 # The wrapper's requirements.txt is incomplete; these fail to import without it.
 # Face-swap will not run without these. Everything else is a nice-to-have.
-REQUIRED_NODES="Comfyui_DreamID-V_wrapper ComfyUI-VideoHelperSuite"
+#
+# KJNodes is not a DreamID-V dependency, but the wrapper's own example workflow
+# is built with ImageResizeKJv2 / ImageConcatMulti / INTConstant, so the
+# workflow will not open without it.
+REQUIRED_NODES="Comfyui_DreamID-V_wrapper ComfyUI-VideoHelperSuite ComfyUI-KJNodes"
 
 EXTRA_PIP="easydict diffusers transformers accelerate sentencepiece ftfy omegaconf einops imageio-ffmpeg av"
 
@@ -64,6 +69,10 @@ step()  { printf '  ->   %s\n' "$1"; }
 
 torch_version() {
   python -c "import torch; print(torch.__version__, torch.version.cuda)" 2>/dev/null || echo "MISSING"
+}
+
+numpy_version() {
+  python -c "import numpy; print(numpy.__version__)" 2>/dev/null || echo "MISSING"
 }
 
 # have_file <path> <min_bytes>
@@ -265,8 +274,9 @@ do_env() {
 do_nodes() {
   phase "Custom nodes"
 
-  local before after
+  local before after np_before np_after
   before=$(torch_version)
+  np_before=$(numpy_version)
 
   for entry in "${NODES[@]}"; do
     local name="${entry%%|*}" repo="${entry##*|}"
@@ -297,6 +307,24 @@ do_nodes() {
   [ "$before" = "$after" ] || \
     die "torch changed during install: '$before' -> '$after'. A dependency downgraded it."
   ok "torch unchanged ($after)"
+
+  # KJNodes and friends pull packages that happily jump numpy to 2.x, which
+  # breaks mediapipe -- and mediapipe is how the wrapper extracts pose. Repair
+  # rather than abort: the node requirements are already satisfied by this point.
+  np_after=$(numpy_version)
+  if [ "$np_before" != "MISSING" ] && [ "$np_before" != "$np_after" ]; then
+    warn "numpy moved $np_before -> $np_after during install; pinning back"
+    pip install -q "numpy==$np_before" 2>/dev/null || true
+    np_after=$(numpy_version)
+    if [ "$np_before" = "$np_after" ]; then
+      ok "numpy restored ($np_after)"
+    else
+      warn "numpy is $np_after, wanted $np_before — if pose extraction fails, run:"
+      printf '           pip install "numpy==%s"\n' "$np_before"
+    fi
+  else
+    ok "numpy unchanged ($np_after)"
+  fi
 }
 
 # ----------------------------------------------------------------------------
