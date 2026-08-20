@@ -136,6 +136,14 @@ written in the last hour.
 Worth running before any long render. Use `doctor` when you want it fixed
 rather than just reported.
 
+For a quick "is it still going?" — ten lines, sized for a phone screen:
+
+```bash
+./scripts/queue-status.sh
+```
+
+Queue depth, GPU utilisation, the last five renders, disk free.
+
 ---
 
 ## Choosing an instance
@@ -157,6 +165,24 @@ Sort by **DLPerf**, not price — the same GPU model varies with cooling and pow
 1. **Disk is not resizable.** Running out mid-download means destroying and starting over.
 2. **Stopped ≠ free.** Storage bills continuously while the instance *exists*. **Destroy** it when finished, don't just stop it.
 3. **A slow host costs more than a pricier fast one.** 18 GB at 100 Mbps is ~25 minutes of paid GPU time.
+
+### Leaving it overnight
+
+Rough figures for a 24 GB box at ~$0.31/hr GPU + ~$0.06/hr storage, over ~14 hours:
+
+| | Cost | Next morning |
+|---|---|---|
+| Keep running | ~$5.20 | Instant, models still in VRAM |
+| **Stop** | ~$0.90 | Restart in ~2 min — **if the GPU is still free** |
+| Destroy | $0 | Re-download ~18 GB, ~30 min plus bandwidth charges |
+
+**Stopping is usually right** — you keep the disk and every model for under a
+dollar.
+
+The catch: a stopped instance releases the GPU back to the host, and if someone
+else rents it you wait. On a deadline, paying the extra ~$4 to keep it running
+is cheap insurance. **Destroying is the one to avoid** — it costs bandwidth
+charges *and* half an hour you may not have.
 
 ---
 
@@ -440,6 +466,70 @@ comfortably.
 
 ---
 
+## Working from a phone
+
+Perfectly workable — renders run server-side, so the phone is only a remote
+control. But two things are genuinely painful on a touchscreen, so do them
+before you leave a desktop.
+
+### Prepare while you still have a keyboard
+
+**1. Settle the workflow settings.** Resampling method, frame count, CRF,
+resolution — anything you'd have to hunt for in a node graph.
+
+**2. Export as API format** (`Workflow > Export (API)`) and park it somewhere
+stable:
+
+```bash
+mv ~/Downloads/*.json /workspace/workflow_api.json
+```
+
+This is the step that *must* happen in advance — `queue-chunks.py` needs API
+format, and exporting it from a phone is miserable.
+
+**3. Upload every clip and source image**, while the connection is good.
+
+### The whole loop, from a phone
+
+```bash
+cd /workspace/vast-comfyui-dreamid && git pull
+
+python scripts/queue-chunks.py /workspace/workflow_api.json --total 216 --dry-run
+python scripts/queue-chunks.py /workspace/workflow_api.json --total 216
+
+./scripts/queue-status.sh
+```
+
+Three commands, no graph editing.
+
+> **Renders survive a dropped connection.** ComfyUI is supervisor-managed and
+> the queue lives server-side — close the browser, lose signal, pocket the
+> phone. Only your *shell* dies, which is why long shell commands belong in
+> `tmux`.
+
+### Terminal
+
+**Termux** (free, F-Droid) beats Jupyter's terminal — it has a real Ctrl / Esc /
+arrow row, which Android's keyboard does not:
+
+```bash
+pkg install openssh
+ssh -p PORT root@HOST
+```
+
+**Termius** or **JuiceSSH** are easier to set up if you'd rather tap than type.
+
+Jupyter still wins for one thing: **downloading files**. Its file browser lets
+you tap a render in `output/` and save it straight to the phone.
+
+### Viewing ComfyUI
+
+Open the vast portal link in the browser — that's Caddy on 8188 with the token,
+so no SSH tunnel is needed. Good for watching the queue and previewing output.
+Don't try to rewire nodes on a touchscreen.
+
+---
+
 ## Not yet verified
 
 Planned but **not run**, so treat as untested:
@@ -457,7 +547,8 @@ Planned but **not run**, so treat as untested:
 
 ```bash
 # health
-./scripts/health.sh
+./scripts/health.sh          # full diagnostic
+./scripts/queue-status.sh    # ten lines, phone-sized
 
 # services
 supervisorctl status
