@@ -99,13 +99,12 @@ Import names are mapped to pip names where they differ (`cv2` →
 ./scripts/health.sh
 ```
 
-Read-only. Reports torch, GPU, disk, models, attention backend, services,
-ports, the real I/O paths, and anything written in the last hour.
+Read-only. Reports torch and CUDA, GPU memory, disk, model presence, attention
+backend, supervisor services, listening ports, the real I/O paths, and anything
+written in the last hour.
 
-Reports torch and CUDA, GPU memory, disk, model presence, attention backend,
-supervisor services, listening ports, and whether the node imported.
-
-Worth running before any long render.
+Worth running before any long render. Use `doctor` when you want it fixed
+rather than just reported.
 
 ---
 
@@ -221,7 +220,7 @@ scp -P 12345 file.mp4 root@HOST:/workspace/ComfyUI/input/
 ## Restoring source photos first
 
 DreamID-V builds identity from the source image, so a soft photo yields a soft
-identity no matter how good the video is. The `facerestore` phase installs
+identity no matter how good the video is. The `enhance` phase installs
 CodeFormer and GFPGAN so this happens **on your own box** — no faces sent to a
 third-party web tool.
 
