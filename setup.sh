@@ -36,6 +36,9 @@ NODES=(
 )
 
 # The wrapper's requirements.txt is incomplete; these fail to import without it.
+# Face-swap will not run without these. Everything else is a nice-to-have.
+REQUIRED_NODES="Comfyui_DreamID-V_wrapper ComfyUI-VideoHelperSuite"
+
 EXTRA_PIP="easydict diffusers transformers accelerate sentencepiece ftfy omegaconf einops imageio-ffmpeg av"
 
 # Minimum expected sizes, used to detect truncated downloads.
@@ -424,7 +427,7 @@ do_doctor() {
   fi
   [ -f "$COMFY_LOG" ] || { warn "no log at $COMFY_LOG"; return 0; }
 
-  local attempt offset missing pkg pkgs
+  local attempt offset missing failed pkg pkgs f
   for attempt in 1 2 3 4 5; do
     # Only read lines produced by THIS restart — the log accumulates, so old
     # errors would otherwise be re-detected forever.
@@ -437,8 +440,25 @@ do_doctor() {
               | grep -oP "No module named '\K[^']+" \
               | cut -d. -f1 | sort -u || true)
 
+    # A node can fail to import for reasons that are NOT a missing module --
+    # a compile error, a bad CUDA build, an API change. Checking only for
+    # ModuleNotFoundError would call that a clean run.
+    failed=$(tail -n +$((offset + 1)) "$COMFY_LOG" \
+             | grep -oP "IMPORT FAILED\).*?custom_nodes/\K[^ /]+" | sort -u || true)
+
     if [ -z "$missing" ]; then
-      ok "all nodes imported cleanly"
+      if [ -n "$failed" ]; then
+        warn "no missing modules, but these nodes still failed to import:"
+        for f in $failed; do
+          case " $REQUIRED_NODES " in
+            *" $f "*) printf '         %s  <-- REQUIRED\n' "$f" ;;
+            *)        printf '         %s  (optional)\n' "$f" ;;
+          esac
+        done
+        warn "see why: grep -B25 'IMPORT FAILED' $COMFY_LOG | tail -40"
+      else
+        ok "all nodes imported cleanly"
+      fi
       break
     fi
 
