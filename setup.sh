@@ -26,6 +26,12 @@ MIN_DISK_GB="${MIN_DISK_GB:-60}"
 FACERESTORE_REPO="${FACERESTORE_REPO:-https://github.com/mav-rik/facerestore_cf}"
 FACERESTORE_NAME="facerestore_cf"
 
+# VideoHelperSuite: load video, combine frames back to video, and -- the part
+# you notice -- an inline player on the output node instead of a pile of PNGs.
+# The DreamID-V example workflow uses its nodes, so this is effectively required.
+VHS_REPO="${VHS_REPO:-https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite}"
+VHS_NAME="ComfyUI-VideoHelperSuite"
+
 # Minimum expected file sizes, used to detect a truncated download.
 SZ_DREAMIDV=6000000000     # ~6.4 GB
 SZ_UMT5=10000000000        # ~11 GB
@@ -153,6 +159,21 @@ do_node() {
     sentencepiece ftfy \
     omegaconf einops imageio-ffmpeg av
   ok "dependencies"
+
+  # Video I/O plus the inline output player. Without this the example workflow
+  # shows red nodes and you get a frame dump instead of a playable clip.
+  local vhs="$COMFY_DIR/custom_nodes/$VHS_NAME"
+  if [ -d "$vhs/.git" ]; then
+    ok "VideoHelperSuite already cloned"
+  else
+    step "cloning VideoHelperSuite"
+    if git clone --depth 1 "$VHS_REPO" "$vhs" 2>/dev/null; then
+      pip install -q -r "$vhs/requirements.txt" 2>/dev/null || true
+      ok "VideoHelperSuite"
+    else
+      warn "clone failed — install 'ComfyUI-VideoHelperSuite' from ComfyUI Manager"
+    fi
+  fi
 
   after=$(torch_version)
   if [ "$before" != "$after" ]; then
