@@ -87,6 +87,38 @@ comfy_paths() {
   COMFY_TMP="${COMFY_TMP:-$COMFY_DIR/temp}"
 }
 
+# Shortcut so /workspace/input and /workspace/output reach the real dirs.
+# ComfyUI's own paths live under $COMFY_DIR; people (and scp muscle memory)
+# reach for the top level. Symlink rather than relocate -- relocating means
+# editing supervisor config, which breaks on template updates.
+#
+# rmdir only succeeds on an EMPTY dir, so a leftover folder holding real files
+# is left alone and reported instead of being clobbered.
+comfy_links() {
+  local name target link
+  for name in input output; do
+    case "$name" in
+      input)  target="$COMFY_IN"  ;;
+      output) target="$COMFY_OUT" ;;
+    esac
+    link="$WORKSPACE/$name"
+
+    [ "$link" = "$target" ] && continue
+    [ -L "$link" ] && { rm -f "$link"; }
+
+    if [ -d "$link" ]; then
+      if rmdir "$link" 2>/dev/null; then
+        :                                  # was an empty leftover, now gone
+      else
+        warn "$link holds files and is NOT what ComfyUI reads — move them:"
+        printf '           mv %s/* %s/\n' "$link" "$target"
+        continue
+      fi
+    fi
+    ln -s "$target" "$link" && ok "$link -> $target"
+  done
+}
+
 do_paths() {
   phase "ComfyUI paths"
   comfy_paths
@@ -94,16 +126,42 @@ do_paths() {
   printf '  put clips and images here   %s\n' "$COMFY_IN"
   printf '  finished renders land here  %s\n' "$COMFY_OUT"
   printf '  scratch (wiped on restart)  %s\n' "$COMFY_TMP"
+  echo
+  comfy_links
+
+  # "Where did my render go?" -- answered by looking, not by assuming. temp/
+  # and the ComfyUI root are included precisely because that is where files
+  # land when a node is misconfigured.
+  echo
+  step "files written in the last 2 hours"
+  local found
+  found=$(find "$COMFY_IN" "$COMFY_OUT" "$COMFY_TMP" "$COMFY_DIR" \
+               -maxdepth 2 -type f -newermt '-120 minutes' \
+               \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' \
+                  -o -iname '*.webp' -o -iname '*.mp4' -o -iname '*.webm' \
+                  -o -iname '*.gif' -o -iname '*.mov' \) 2>/dev/null \
+          | sort -u | head -25)
+  if [ -n "$found" ]; then
+    printf '%s\n' "$found" | while read -r f; do
+      printf '  %-8s %s\n' "$(du -h "$f" 2>/dev/null | cut -f1)" "$f"
+    done
+  else
+    echo "  none — nothing has been rendered or uploaded recently"
+  fi
+
   cat <<EOF
 
-  Two things that bite people:
+  If your renders showed up in temp/ rather than output/, the node is the
+  cause, not the path:
 
-    * scp into the input dir and the LoadImage dropdown will NOT show the file
-      until you hit Refresh in the ComfyUI menu. The list is cached.
+    * PreviewImage always writes to temp/. It is a preview, not a save.
+      Use SaveImage.
 
-    * PreviewImage writes to temp/, not output/. Same for VHS_VideoCombine
-      when save_output is unchecked. Use SaveImage, and TICK save_output on
-      VideoCombine, or your render is discarded on the next restart.
+    * VHS_VideoCombine writes to temp/ unless save_output is TICKED.
+      Untick it and the render is discarded on the next restart.
+
+  And after scp-ing into the input dir, hit Refresh in the ComfyUI menu or
+  the LoadImage dropdown will not list the file. The list is cached.
 EOF
 }
 
