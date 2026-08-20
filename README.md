@@ -151,7 +151,7 @@ Queue depth, GPU utilisation, the last five renders, disk free.
 
 | Setting | Value | Why |
 |---|---|---|
-| GPU | RTX 4090 24 GB | Fits DreamID-V's ~16 GB at an 81-frame window. More VRAM buys resolution, not longer clips — the 81-frame limit is Wan's training window |
+| GPU | RTX 4090 24 GB (480p) · 5090 32 GB (720p) | More VRAM buys **resolution, not longer clips** — 81 frames is Wan's training window, not a memory limit. See [Resolution and VRAM](#resolution-and-vram) |
 | Disk | **100–200 GB** | **Not resizable after launch** |
 | Reliability | > 99 % | Host-specific on vast, not platform-wide |
 | Internet | > 500 Mbps down | You pay GPU rates while pulling 18 GB |
@@ -410,6 +410,34 @@ find /workspace/ComfyUI/custom_nodes/Comfyui_DreamID-V_wrapper -name "*.json"
 **Always test on a throwaway 2-second clip first.** You are validating that the
 pipeline runs end to end — resolution, VRAM, output format. A failed
 18-second render wastes far more than a failed 2-second one.
+
+### Resolution and VRAM
+
+Dimensions must be **divisible by 16** — the VAE downsamples 8× and the
+transformer patches 2×. Stay near a trained resolution too; Wan 2.1 was trained
+at 480p and 720p, and drifting far from those degrades quality regardless of
+available memory.
+
+| Resolution | Pixels | Cost vs. 848×480 | Use for |
+|---|---|---|---|
+| 848×480 | 407k | 1× | 16:9 default |
+| 480×848 | 407k | 1× | vertical crop |
+| **640×640** | 410k | 1× | **square face crops** |
+| 480×640 | 307k | 0.75× | portrait head-and-shoulders |
+| 1280×720 | 922k | ~2.3× | 720p |
+
+**Measured: 720p at 81 frames peaks at ~28 GB** on a card large enough to keep
+everything resident.
+
+That figure is an upper bound, not a floor. On a smaller card ComfyUI offloads
+the ~11 GB text encoder once prompt encoding is done, so peak during sampling
+comes out **well below** 28 GB. A 32 GB card is comfortable at 720p; 24 GB is
+plausible but worth testing rather than assuming.
+
+> **Ask what fraction of the pixels is face, not what resolution is best.**
+> A tight 640×640 crop beats a loose 1280×720 frame — more face detail, more
+> mask resolution to feather across, and 45 % of the compute. Crop the plate
+> to the face, swap, composite back over the untouched original.
 
 ### Clips longer than the frame window
 
