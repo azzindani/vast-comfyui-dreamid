@@ -75,6 +75,25 @@ numpy_version() {
   python -c "import numpy; print(numpy.__version__)" 2>/dev/null || echo "MISSING"
 }
 
+# decord is imported INSIDE the sampler's generate(), not at node load. So a
+# missing decord passes every startup check, then fails ~90s into a render
+# after the models are already loaded. Install it up front.
+#
+# Upstream decord is unmaintained and its last release predates current
+# Pythons; eva-decord is the maintained fork that provides the same `decord`
+# module. Try upstream first so a working install is never shadowed.
+ensure_decord() {
+  python -c "import decord" 2>/dev/null && { ok "decord present"; return 0; }
+  step "installing decord (lazy import — otherwise fails mid-render)"
+  pip install -q decord 2>/dev/null || true
+  python -c "import decord" 2>/dev/null && { ok "decord"; return 0; }
+  warn "no upstream decord wheel for this Python — trying the eva-decord fork"
+  pip install -q eva-decord 2>/dev/null || true
+  python -c "import decord" 2>/dev/null && { ok "decord (eva-decord fork)"; return 0; }
+  warn "decord unavailable — the sampler will fail when reading video reference input"
+  return 1
+}
+
 # have_file <path> <min_bytes>
 have_file() {
   [ -f "$1" ] && [ "$(stat -c%s "$1" 2>/dev/null || echo 0)" -ge "$2" ]
@@ -282,9 +301,16 @@ do_nodes() {
     local name="${entry%%|*}" repo="${entry##*|}"
     local dest="$COMFY_DIR/custom_nodes/$name"
 
-    if [ -d "$dest/.git" ]; then
+    # ComfyUI loads a directory node through its __init__.py. A clone that was
+    # interrupted leaves .git behind without it, which reads as "installed" but
+    # fails at import — so check for the file, not just the directory.
+    if [ -d "$dest/.git" ] && [ -f "$dest/__init__.py" ]; then
       ok "$name already cloned"
     else
+      if [ -d "$dest" ]; then
+        warn "$name present but incomplete (no __init__.py) — re-cloning"
+        rm -rf "$dest"
+      fi
       step "cloning $name"
       if git clone --depth 1 "$repo" "$dest" 2>/dev/null; then
         ok "$name"
@@ -302,6 +328,8 @@ do_nodes() {
   # shellcheck disable=SC2086
   pip install -q $EXTRA_PIP
   ok "dependencies"
+
+  ensure_decord
 
   after=$(torch_version)
   [ "$before" = "$after" ] || \
@@ -505,6 +533,11 @@ do_doctor() {
     do_models
     do_enhance
   fi
+
+  # Checked explicitly: decord is imported at render time, not at node load,
+  # so it never appears in the startup log the module loop below reads.
+  step "checking lazy imports"
+  ensure_decord || true
 
   # --- modules -------------------------------------------------------------
   if ! command -v supervisorctl >/dev/null || ! supervisorctl status comfyui >/dev/null 2>&1; then
