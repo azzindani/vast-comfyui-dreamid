@@ -2,14 +2,17 @@
 #
 # One-command provisioning for DreamID-V on a vast.ai ComfyUI instance.
 #
-#   ./setup.sh            run every phase
-#   ./setup.sh verify     preflight checks only
-#   ./setup.sh env        apt packages, HF_HOME, directories
-#   ./setup.sh node       clone + install the DreamID-V wrapper
-#   ./setup.sh models     download the three model files
-#   ./setup.sh restart    restart ComfyUI and check the log
+#   ./setup.sh              run every phase
+#   ./setup.sh verify       preflight checks only
+#   ./setup.sh env          apt packages, HF_HOME, directories
+#   ./setup.sh node         clone + install the DreamID-V wrapper
+#   ./setup.sh models       download the three model files
+#   ./setup.sh facerestore  CodeFormer / GFPGAN for cleaning source photos
+#   ./setup.sh restart      restart ComfyUI and check the log
 #
 # Safe to re-run. Downloads and clones are skipped if already present.
+#
+# Everything runs on hardware you rent. No image or video leaves the box.
 
 set -euo pipefail
 
@@ -19,6 +22,9 @@ NODE_REPO="${NODE_REPO:-https://github.com/TTPlanetPig/Comfyui_DreamID-V_wrapper
 NODE_NAME="Comfyui_DreamID-V_wrapper"
 COMFY_LOG="${COMFY_LOG:-/var/log/portal/comfyui.log}"
 MIN_DISK_GB="${MIN_DISK_GB:-60}"
+
+FACERESTORE_REPO="${FACERESTORE_REPO:-https://github.com/mav-rik/facerestore_cf}"
+FACERESTORE_NAME="facerestore_cf"
 
 # Minimum expected file sizes, used to detect a truncated download.
 SZ_DREAMIDV=6000000000     # ~6.4 GB
@@ -92,9 +98,9 @@ sys.exit(0 if v >= (2, 4) else 1)
 do_env() {
   phase "Environment"
 
-  step "installing tmux + ffmpeg"
-  apt-get update -qq && apt-get install -y -qq tmux ffmpeg >/dev/null
-  ok "tmux + ffmpeg"
+  step "installing tmux + ffmpeg + curl"
+  apt-get update -qq && apt-get install -y -qq tmux ffmpeg curl >/dev/null
+  ok "tmux + ffmpeg + curl"
 
   # Without this, models land in ~/.cache/huggingface AND get copied into
   # ComfyUI/models — paying for ~18GB twice.
@@ -106,6 +112,7 @@ do_env() {
 
   mkdir -p "$WORKSPACE"/{input,output,tmp} \
            "$COMFY_DIR"/models/{diffusion_models,vae,text_encoders} \
+           "$COMFY_DIR"/models/{facerestore_models,facedetection} \
            "$COMFY_DIR"/input
   ok "directories"
 
@@ -215,6 +222,75 @@ do_models() {
 }
 
 # ----------------------------------------------------------------------------
+# facerestore — CodeFormer / GFPGAN, for cleaning up low-res source photos
+#
+# DreamID-V builds identity from the source image, so a soft photo gives a soft
+# identity. Doing this on-box rather than via a web tool keeps faces private.
+# ----------------------------------------------------------------------------
+
+# fetch <url> <dest> <min_bytes> <label>
+fetch() {
+  local url="$1" dest="$2" min="$3" label="$4"
+  if have_file "$dest" "$min"; then
+    ok "$label present"
+    return 0
+  fi
+  step "downloading $label"
+  mkdir -p "$(dirname "$dest")"
+  if command -v curl >/dev/null; then
+    curl -fsSL --retry 3 -o "$dest" "$url" || { warn "could not fetch $label"; return 1; }
+  else
+    wget -q --tries=3 -O "$dest" "$url" || { warn "could not fetch $label"; return 1; }
+  fi
+  ok "$label"
+}
+
+do_facerestore() {
+  phase "Face restoration (CodeFormer / GFPGAN)"
+
+  local dest="$COMFY_DIR/custom_nodes/$FACERESTORE_NAME"
+
+  if [ -d "$dest/.git" ]; then
+    ok "node already cloned"
+  else
+    step "cloning $FACERESTORE_REPO"
+    if git clone --depth 1 "$FACERESTORE_REPO" "$dest" 2>/dev/null; then
+      ok "cloned"
+    else
+      warn "clone failed — install 'facerestore' from the ComfyUI Manager UI instead."
+      warn "the models below still download, so Manager's node will find them."
+    fi
+  fi
+
+  if [ -f "$dest/requirements.txt" ]; then
+    step "installing requirements"
+    pip install -q -r "$dest/requirements.txt" || warn "requirements install reported problems"
+  fi
+
+  # Restoration weights. Direct GitHub release URLs — versioned and stable.
+  # ~700MB total, negligible next to the 18GB of DreamID-V models.
+  fetch "https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth" \
+        "$COMFY_DIR/models/facerestore_models/codeformer.pth" \
+        300000000 "codeformer.pth" || true
+
+  fetch "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth" \
+        "$COMFY_DIR/models/facerestore_models/GFPGANv1.4.pth" \
+        300000000 "GFPGANv1.4.pth" || true
+
+  # Detection + parsing, required by both restorers.
+  fetch "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth" \
+        "$COMFY_DIR/models/facedetection/detection_Resnet50_Final.pth" \
+        100000000 "detection_Resnet50_Final.pth" || true
+
+  fetch "https://github.com/xinntao/facexlib/releases/download/v0.2.2/parsing_parsenet.pth" \
+        "$COMFY_DIR/models/facedetection/parsing_parsenet.pth" \
+        50000000 "parsing_parsenet.pth" || true
+
+  printf '\n'
+  ls -lh "$COMFY_DIR"/models/facerestore_models/ "$COMFY_DIR"/models/facedetection/ 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------------------
 # restart — ComfyUI is supervisor-managed; never run main.py by hand
 # ----------------------------------------------------------------------------
 
@@ -260,6 +336,7 @@ do_all() {
   do_env
   do_node
   do_models
+  do_facerestore
   do_restart
 
   phase "Done"
@@ -270,19 +347,28 @@ do_all() {
 
   Then open http://localhost:8188
 
-  Next: put a source face image and a 2-second test clip in
-  $COMFY_DIR/input/ and load workflows/ or the wrapper's example JSON.
+  Order of work on this box:
 
-  Test on a throwaway clip before the real shots.
+    1. Restore your source photos   FaceRestoreCFWithModel, codeformer,
+                                    fidelity 0.5 and 0.7 -- keep whichever
+                                    still looks like the person
+    2. Swap a 2-second test clip    confirm resolution, VRAM, output format
+    3. Swap the real clips
+    4. Download results, then DESTROY the instance
+
+  Put source images and clips in $COMFY_DIR/input/
+
+  Nothing leaves this machine.
 EOF
 }
 
 case "${1:-all}" in
-  all)     do_all ;;
-  verify)  do_verify ;;
-  env)     do_env ;;
-  node)    do_node ;;
-  models)  do_models ;;
-  restart) do_restart ;;
-  *)       die "unknown phase '$1' (use: all|verify|env|node|models|restart)" ;;
+  all)          do_all ;;
+  verify)       do_verify ;;
+  env)          do_env ;;
+  node)         do_node ;;
+  models)       do_models ;;
+  facerestore)  do_facerestore ;;
+  restart)      do_restart ;;
+  *)            die "unknown phase '$1' (use: all|verify|env|node|models|facerestore|restart)" ;;
 esac

@@ -41,9 +41,10 @@ Roughly 15–25 minutes, mostly the 11 GB text encoder download.
 | Phase | Action |
 |---|---|
 | `verify` | Aborts unless torch ≥ 2.4, a GPU is visible, and ≥60 GB is free |
-| `env` | `tmux` + `ffmpeg`, sets `HF_HOME`, creates directories |
+| `env` | `tmux` + `ffmpeg` + `curl`, sets `HF_HOME`, creates directories |
 | `node` | Clones the DreamID-V wrapper, installs its deps **plus the ones it forgets** |
 | `models` | Downloads the three model files (~18 GB) and applies the required rename |
+| `facerestore` | CodeFormer + GFPGAN for cleaning up low-res source photos (~700 MB) |
 | `restart` | `supervisorctl restart comfyui`, then greps the log to confirm the node loaded |
 
 Run a single phase if you need to:
@@ -51,6 +52,7 @@ Run a single phase if you need to:
 ```bash
 ./setup.sh verify
 ./setup.sh models
+./setup.sh facerestore
 ./setup.sh restart
 ```
 
@@ -181,11 +183,36 @@ scp -P 12345 file.mp4 root@HOST:/workspace/ComfyUI/input/
 
 ---
 
+## Restoring source photos first
+
+DreamID-V builds identity from the source image, so a soft photo yields a soft
+identity no matter how good the video is. The `facerestore` phase installs
+CodeFormer and GFPGAN so this happens **on your own box** — no faces sent to a
+third-party web tool.
+
+Three nodes:
+
+```
+Load Image → FaceRestoreCFWithModel → Save Image
+                    ↑
+         FaceRestoreModelLoader (codeformer.pth)
+```
+
+- **facedetection:** `retinaface_resnet50`
+- **codeformer_fidelity:** run at `0.5` and `0.7`, compare both
+
+**Keep whichever still unmistakably looks like the person.** Lower fidelity is
+sharper but drifts toward a generic face — sharp and wrong is worse than soft
+and right.
+
+> Worth trying the raw photo on a test clip first. DreamID-V has its own
+> identity encoder and may handle a soft source better than expected.
+
 ## Running a swap
 
 You need two files in `/workspace/ComfyUI/input/`:
 
-1. **Source face** — one restored photo, frontal, ≥512 px
+1. **Source face** — restored photo, frontal, ≥512 px
 2. **Target clip** — the shot to swap into
 
 Load the wrapper's example workflow:
@@ -206,9 +233,13 @@ The following are planned but **have not been run**, so treat them as untested:
 
 - **LatentSync 1.6** lip-sync pass (~18 GB VRAM)
 - **VoxCPM2** voice cloning — runs on a local 8 GB laptop, not this box
-- **CodeFormer + Real-ESRGAN** enhancement pass
+- **Real-ESRGAN** upscaling pass
 
 Add them to `setup.sh` once confirmed working, rather than assuming.
+
+> **You may not need lip-sync at all.** DreamID-V preserves the original
+> actor's mouth movements, so keeping the source clip's audio gives you perfect
+> sync for free. Lip-sync is only required if you replace the dialogue.
 
 ---
 
