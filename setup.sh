@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 #
-# One-command provisioning for DreamID-V on a vast.ai ComfyUI instance.
+# One-command provisioning for AI video face-swap on a vast.ai ComfyUI instance.
 #
-#   ./setup.sh              run every phase
-#   ./setup.sh verify       preflight checks only
+#   ./setup.sh              everything below except `wan`
+#   ./setup.sh verify       preflight only — aborts before anything expensive
 #   ./setup.sh env          apt packages, HF_HOME, directories
-#   ./setup.sh node         clone + install the DreamID-V wrapper
-#   ./setup.sh models       download the three model files
-#   ./setup.sh facerestore  CodeFormer / GFPGAN + Real-ESRGAN upscalers
-#   ./setup.sh restart      restart ComfyUI and check the log
+#   ./setup.sh nodes        DreamID-V + VideoHelperSuite + face restore + RIFE
+#   ./setup.sh models       DreamID-V weights (~18GB)
+#   ./setup.sh enhance      face restore, upscalers, interpolation (~1GB)
+#   ./setup.sh restart      restart ComfyUI, confirm nodes loaded
 #
-# Safe to re-run. Downloads and clones are skipped if already present.
+#   ./setup.sh wan          OPTIONAL: Wan 2.2 Animate (~20GB more). Not in `all`.
+#
+# Safe to re-run — clones and downloads are skipped when already present, with
+# size checks so a truncated download retries instead of silently passing.
 #
 # Everything runs on hardware you rent. No image or video leaves the box.
 
@@ -18,21 +21,22 @@ set -euo pipefail
 
 COMFY_DIR="${COMFY_DIR:-/workspace/ComfyUI}"
 WORKSPACE="${WORKSPACE:-/workspace}"
-NODE_REPO="${NODE_REPO:-https://github.com/TTPlanetPig/Comfyui_DreamID-V_wrapper}"
-NODE_NAME="Comfyui_DreamID-V_wrapper"
 COMFY_LOG="${COMFY_LOG:-/var/log/portal/comfyui.log}"
 MIN_DISK_GB="${MIN_DISK_GB:-60}"
 
-FACERESTORE_REPO="${FACERESTORE_REPO:-https://github.com/mav-rik/facerestore_cf}"
-FACERESTORE_NAME="facerestore_cf"
+# --- custom nodes -----------------------------------------------------------
+# name|repo — cloned into custom_nodes, requirements.txt installed if present
+NODES=(
+  "Comfyui_DreamID-V_wrapper|https://github.com/TTPlanetPig/Comfyui_DreamID-V_wrapper"
+  "ComfyUI-VideoHelperSuite|https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
+  "facerestore_cf|https://github.com/mav-rik/facerestore_cf"
+  "ComfyUI-Frame-Interpolation|https://github.com/Fannovel16/ComfyUI-Frame-Interpolation"
+)
 
-# VideoHelperSuite: load video, combine frames back to video, and -- the part
-# you notice -- an inline player on the output node instead of a pile of PNGs.
-# The DreamID-V example workflow uses its nodes, so this is effectively required.
-VHS_REPO="${VHS_REPO:-https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite}"
-VHS_NAME="ComfyUI-VideoHelperSuite"
+# The wrapper's requirements.txt is incomplete; these fail to import without it.
+EXTRA_PIP="easydict diffusers transformers accelerate sentencepiece ftfy omegaconf einops imageio-ffmpeg av"
 
-# Minimum expected file sizes, used to detect a truncated download.
+# Minimum expected sizes, used to detect truncated downloads.
 SZ_DREAMIDV=6000000000     # ~6.4 GB
 SZ_UMT5=10000000000        # ~11 GB
 SZ_VAE=400000000           # ~485 MB
@@ -57,205 +61,15 @@ torch_version() {
   python -c "import torch; print(torch.__version__, torch.version.cuda)" 2>/dev/null || echo "MISSING"
 }
 
-# ----------------------------------------------------------------------------
-# verify — run before anything expensive
-# ----------------------------------------------------------------------------
-
-do_verify() {
-  phase "Preflight"
-
-  [ -d "$COMFY_DIR" ] || die "ComfyUI not found at $COMFY_DIR. Set COMFY_DIR if it lives elsewhere."
-  ok "ComfyUI found at $COMFY_DIR"
-
-  # DreamID-V requires torch >= 2.4
-  if ! python -c "
-import torch, sys
-v = tuple(int(x) for x in torch.__version__.split('+')[0].split('.')[:2])
-sys.exit(0 if v >= (2, 4) else 1)
-" 2>/dev/null; then
-    die "torch is $(torch_version) — DreamID-V needs >= 2.4. Destroy this instance and pick a newer template."
-  fi
-  ok "torch $(torch_version)"
-
-  command -v nvidia-smi >/dev/null || die "nvidia-smi missing — no GPU visible."
-  local gpu
-  gpu=$(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1)
-  ok "GPU: $gpu"
-
-  local avail
-  avail=$(df -BG --output=avail "$WORKSPACE" | tail -1 | tr -dc '0-9')
-  if [ "$avail" -lt "$MIN_DISK_GB" ]; then
-    die "only ${avail}GB free on $WORKSPACE, need >= ${MIN_DISK_GB}GB. Disk is NOT resizable — re-rent with more."
-  fi
-  ok "disk: ${avail}GB free"
-
-  # Not fatal, but tells us which restart path to use later.
-  if command -v supervisorctl >/dev/null; then
-    ok "supervisor present (ComfyUI is service-managed)"
-  else
-    warn "no supervisor — you will need to start ComfyUI manually"
-  fi
-}
-
-# ----------------------------------------------------------------------------
-# env — packages, HF cache location, directories
-# ----------------------------------------------------------------------------
-
-do_env() {
-  phase "Environment"
-
-  step "installing tmux + ffmpeg + curl"
-  apt-get update -qq && apt-get install -y -qq tmux ffmpeg curl >/dev/null
-  ok "tmux + ffmpeg + curl"
-
-  # Without this, models land in ~/.cache/huggingface AND get copied into
-  # ComfyUI/models — paying for ~18GB twice.
-  export HF_HOME="$WORKSPACE/hf_cache"
-  if ! grep -q "HF_HOME=$WORKSPACE/hf_cache" ~/.bashrc 2>/dev/null; then
-    echo "export HF_HOME=$WORKSPACE/hf_cache" >> ~/.bashrc
-  fi
-  ok "HF_HOME=$HF_HOME"
-
-  mkdir -p "$WORKSPACE"/{input,output,tmp} \
-           "$COMFY_DIR"/models/{diffusion_models,vae,text_encoders} \
-           "$COMFY_DIR"/models/{facerestore_models,facedetection,upscale_models} \
-           "$COMFY_DIR"/input
-  ok "directories"
-
-  step "installing huggingface_hub CLI"
-  pip install -q -U "huggingface_hub[cli]"
-  ok "hf CLI"
-}
-
-# ----------------------------------------------------------------------------
-# node — clone the wrapper and install its (incomplete) requirements
-# ----------------------------------------------------------------------------
-
-do_node() {
-  phase "DreamID-V node"
-
-  local dest="$COMFY_DIR/custom_nodes/$NODE_NAME"
-  local before after
-  before=$(torch_version)
-
-  if [ -d "$dest/.git" ]; then
-    ok "already cloned"
-  else
-    step "cloning $NODE_REPO"
-    git clone --depth 1 "$NODE_REPO" "$dest"
-    ok "cloned"
-  fi
-
-  step "installing requirements.txt"
-  pip install -q -r "$dest/requirements.txt"
-
-  # requirements.txt is incomplete. These are the modules that actually
-  # failed to import on a clean install, plus close relatives that commonly
-  # follow in this repo family.
-  step "installing the deps requirements.txt forgets"
-  pip install -q \
-    easydict \
-    diffusers transformers accelerate \
-    sentencepiece ftfy \
-    omegaconf einops imageio-ffmpeg av
-  ok "dependencies"
-
-  # Video I/O plus the inline output player. Without this the example workflow
-  # shows red nodes and you get a frame dump instead of a playable clip.
-  local vhs="$COMFY_DIR/custom_nodes/$VHS_NAME"
-  if [ -d "$vhs/.git" ]; then
-    ok "VideoHelperSuite already cloned"
-  else
-    step "cloning VideoHelperSuite"
-    if git clone --depth 1 "$VHS_REPO" "$vhs" 2>/dev/null; then
-      pip install -q -r "$vhs/requirements.txt" 2>/dev/null || true
-      ok "VideoHelperSuite"
-    else
-      warn "clone failed — install 'ComfyUI-VideoHelperSuite' from ComfyUI Manager"
-    fi
-  fi
-
-  after=$(torch_version)
-  if [ "$before" != "$after" ]; then
-    die "torch changed during install: '$before' -> '$after'. A dependency downgraded it. Reinstall the correct wheel before continuing."
-  fi
-  ok "torch unchanged ($after)"
-}
-
-# ----------------------------------------------------------------------------
-# models — ~18GB across three files
-# ----------------------------------------------------------------------------
-
 # have_file <path> <min_bytes>
 have_file() {
   [ -f "$1" ] && [ "$(stat -c%s "$1" 2>/dev/null || echo 0)" -ge "$2" ]
 }
 
-do_models() {
-  phase "Models (~18GB)"
-
-  export HF_HOME="$WORKSPACE/hf_cache"
-  cd "$COMFY_DIR"
-
-  local dreamidv="models/diffusion_models/dreamidv.pth"
-  local vae="models/vae/Wan2.1_VAE.pth"
-  local umt5="models/text_encoders/umt5-xxl-enc-bf16.pth"
-
-  if have_file "$dreamidv" "$SZ_DREAMIDV"; then
-    ok "dreamidv.pth present"
-  else
-    step "downloading dreamidv.pth (~6.4GB)"
-    hf download XuGuo699/DreamID-V dreamidv.pth --local-dir models/diffusion_models
-    ok "dreamidv.pth"
-  fi
-
-  if have_file "$vae" "$SZ_VAE"; then
-    ok "Wan2.1_VAE.pth present"
-  else
-    step "downloading Wan2.1_VAE.pth (~485MB)"
-    hf download Wan-AI/Wan2.1-T2V-1.3B Wan2.1_VAE.pth --local-dir models/vae
-    ok "Wan2.1_VAE.pth"
-  fi
-
-  if have_file "$umt5" "$SZ_UMT5"; then
-    ok "umt5-xxl-enc-bf16.pth present"
-  else
-    step "downloading umt5 encoder (~11GB, slowest step)"
-    hf download Wan-AI/Wan2.1-T2V-1.3B models_t5_umt5-xxl-enc-bf16.pth \
-      --local-dir models/text_encoders
-    # The repo filename and the name the wrapper expects differ.
-    mv models/text_encoders/models_t5_umt5-xxl-enc-bf16.pth "$umt5"
-    ok "umt5-xxl-enc-bf16.pth (renamed)"
-  fi
-
-  # --local-dir normally downloads in place, but check for a duplicate copy.
-  if [ -d "$HF_HOME" ]; then
-    local cache_kb
-    cache_kb=$(du -sk "$HF_HOME" 2>/dev/null | cut -f1)
-    if [ "${cache_kb:-0}" -gt 1000000 ]; then
-      warn "hf_cache is $((cache_kb / 1024))MB — likely duplicate copies. rm -rf $HF_HOME to reclaim."
-    fi
-  fi
-
-  printf '\n'
-  ls -lh models/diffusion_models/dreamidv.pth models/vae/Wan2.1_VAE.pth "$umt5"
-  df -h "$WORKSPACE" | tail -1
-}
-
-# ----------------------------------------------------------------------------
-# facerestore — CodeFormer / GFPGAN, for cleaning up low-res source photos
-#
-# DreamID-V builds identity from the source image, so a soft photo gives a soft
-# identity. Doing this on-box rather than via a web tool keeps faces private.
-# ----------------------------------------------------------------------------
-
 # fetch <url> <dest> <min_bytes> <label>
 fetch() {
   local url="$1" dest="$2" min="$3" label="$4"
-  if have_file "$dest" "$min"; then
-    ok "$label present"
-    return 0
-  fi
+  if have_file "$dest" "$min"; then ok "$label present"; return 0; fi
   step "downloading $label"
   mkdir -p "$(dirname "$dest")"
   if command -v curl >/dev/null; then
@@ -266,62 +80,256 @@ fetch() {
   ok "$label"
 }
 
-do_facerestore() {
-  phase "Face restoration (CodeFormer / GFPGAN)"
+# hf_get <repo> <remote_path> <local_dir> <final_name> <min_bytes>
+hf_get() {
+  local repo="$1" remote="$2" dir="$3" name="$4" min="$5"
+  local final="$dir/$name"
+  if have_file "$final" "$min"; then ok "$name present"; return 0; fi
+  step "downloading $name"
+  mkdir -p "$dir"
+  hf download "$repo" "$remote" --local-dir "$dir" >/dev/null || { warn "failed: $name"; return 1; }
+  # Repackaged repos nest files under split_files/…; flatten and rename.
+  local landed="$dir/$remote"
+  [ -f "$landed" ] && [ "$landed" != "$final" ] && mv "$landed" "$final"
+  find "$dir" -type d -empty -delete 2>/dev/null || true
+  ok "$name"
+}
 
-  local dest="$COMFY_DIR/custom_nodes/$FACERESTORE_NAME"
+# ----------------------------------------------------------------------------
+# verify
+# ----------------------------------------------------------------------------
 
-  if [ -d "$dest/.git" ]; then
-    ok "node already cloned"
-  else
-    step "cloning $FACERESTORE_REPO"
-    if git clone --depth 1 "$FACERESTORE_REPO" "$dest" 2>/dev/null; then
-      ok "cloned"
+do_verify() {
+  phase "Preflight"
+
+  [ -d "$COMFY_DIR" ] || die "ComfyUI not found at $COMFY_DIR. Set COMFY_DIR if it lives elsewhere."
+  ok "ComfyUI at $COMFY_DIR"
+
+  # DreamID-V requires torch >= 2.4
+  if ! python -c "
+import torch, sys
+v = tuple(int(x) for x in torch.__version__.split('+')[0].split('.')[:2])
+sys.exit(0 if v >= (2, 4) else 1)
+" 2>/dev/null; then
+    die "torch is $(torch_version) — need >= 2.4. Destroy this instance, pick a newer template."
+  fi
+  ok "torch $(torch_version)"
+
+  command -v nvidia-smi >/dev/null || die "nvidia-smi missing — no GPU visible."
+  ok "GPU: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1)"
+
+  local avail
+  avail=$(df -BG --output=avail "$WORKSPACE" | tail -1 | tr -dc '0-9')
+  [ "$avail" -ge "$MIN_DISK_GB" ] || \
+    die "only ${avail}GB free, need >= ${MIN_DISK_GB}GB. Disk is NOT resizable — re-rent bigger."
+  ok "disk: ${avail}GB free"
+
+  command -v supervisorctl >/dev/null \
+    && ok "supervisor present (ComfyUI is service-managed)" \
+    || warn "no supervisor — you will start ComfyUI manually"
+}
+
+# ----------------------------------------------------------------------------
+# env
+# ----------------------------------------------------------------------------
+
+do_env() {
+  phase "Environment"
+
+  step "apt packages"
+  apt-get update -qq && apt-get install -y -qq tmux ffmpeg curl >/dev/null
+  ok "tmux + ffmpeg + curl"
+
+  # Without this, weights land in ~/.cache/huggingface AND get copied into
+  # ComfyUI/models — paying for ~18GB of bandwidth and disk twice.
+  export HF_HOME="$WORKSPACE/hf_cache"
+  grep -q "HF_HOME=$WORKSPACE/hf_cache" ~/.bashrc 2>/dev/null || \
+    echo "export HF_HOME=$WORKSPACE/hf_cache" >> ~/.bashrc
+  ok "HF_HOME=$HF_HOME"
+
+  mkdir -p "$WORKSPACE"/{input,output,tmp} \
+           "$COMFY_DIR"/models/{diffusion_models,vae,text_encoders,loras} \
+           "$COMFY_DIR"/models/{facerestore_models,facedetection,upscale_models} \
+           "$COMFY_DIR"/input
+  ok "directories"
+
+  step "huggingface_hub CLI"
+  pip install -q -U "huggingface_hub[cli]"
+  ok "hf CLI"
+}
+
+# ----------------------------------------------------------------------------
+# nodes
+# ----------------------------------------------------------------------------
+
+do_nodes() {
+  phase "Custom nodes"
+
+  local before after
+  before=$(torch_version)
+
+  for entry in "${NODES[@]}"; do
+    local name="${entry%%|*}" repo="${entry##*|}"
+    local dest="$COMFY_DIR/custom_nodes/$name"
+
+    if [ -d "$dest/.git" ]; then
+      ok "$name already cloned"
     else
-      warn "clone failed — install 'facerestore' from the ComfyUI Manager UI instead."
-      warn "the models below still download, so Manager's node will find them."
+      step "cloning $name"
+      if git clone --depth 1 "$repo" "$dest" 2>/dev/null; then
+        ok "$name"
+      else
+        warn "$name clone failed — install it from the ComfyUI Manager UI"
+        continue
+      fi
     fi
+
+    [ -f "$dest/requirements.txt" ] && \
+      pip install -q -r "$dest/requirements.txt" 2>/dev/null || true
+  done
+
+  step "deps the wrappers forget"
+  # shellcheck disable=SC2086
+  pip install -q $EXTRA_PIP
+  ok "dependencies"
+
+  after=$(torch_version)
+  [ "$before" = "$after" ] || \
+    die "torch changed during install: '$before' -> '$after'. A dependency downgraded it."
+  ok "torch unchanged ($after)"
+}
+
+# ----------------------------------------------------------------------------
+# models — DreamID-V, ~18GB
+# ----------------------------------------------------------------------------
+
+do_models() {
+  phase "DreamID-V weights (~18GB)"
+
+  export HF_HOME="$WORKSPACE/hf_cache"
+  cd "$COMFY_DIR"
+
+  hf_get XuGuo699/DreamID-V dreamidv.pth \
+         models/diffusion_models dreamidv.pth "$SZ_DREAMIDV"
+
+  hf_get Wan-AI/Wan2.1-T2V-1.3B Wan2.1_VAE.pth \
+         models/vae Wan2.1_VAE.pth "$SZ_VAE"
+
+  # Repo name and the name the wrapper expects differ — hf_get renames it.
+  hf_get Wan-AI/Wan2.1-T2V-1.3B models_t5_umt5-xxl-enc-bf16.pth \
+         models/text_encoders umt5-xxl-enc-bf16.pth "$SZ_UMT5"
+
+  if [ -d "$HF_HOME" ]; then
+    local kb; kb=$(du -sk "$HF_HOME" 2>/dev/null | cut -f1)
+    [ "${kb:-0}" -gt 1000000 ] && \
+      warn "hf_cache is $((kb / 1024))MB — duplicate copies. rm -rf $HF_HOME to reclaim."
   fi
 
-  if [ -f "$dest/requirements.txt" ]; then
-    step "installing requirements"
-    pip install -q -r "$dest/requirements.txt" || warn "requirements install reported problems"
-  fi
+  printf '\n'; df -h "$WORKSPACE" | tail -1
+}
 
-  # Restoration weights. Direct GitHub release URLs — versioned and stable.
-  # ~700MB total, negligible next to the 18GB of DreamID-V models.
+# ----------------------------------------------------------------------------
+# enhance — restore, upscale, interpolate. ~1GB total.
+# ----------------------------------------------------------------------------
+
+do_enhance() {
+  phase "Enhancement models (~1GB)"
+
+  # Face restoration. DreamID-V derives identity from the source image, so a
+  # soft photo gives a soft swap regardless of video quality.
   fetch "https://github.com/sczhou/CodeFormer/releases/download/v0.1.0/codeformer.pth" \
-        "$COMFY_DIR/models/facerestore_models/codeformer.pth" \
-        300000000 "codeformer.pth" || true
+        "$COMFY_DIR/models/facerestore_models/codeformer.pth" 300000000 "codeformer.pth" || true
 
   fetch "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth" \
-        "$COMFY_DIR/models/facerestore_models/GFPGANv1.4.pth" \
-        300000000 "GFPGANv1.4.pth" || true
+        "$COMFY_DIR/models/facerestore_models/GFPGANv1.4.pth" 300000000 "GFPGANv1.4.pth" || true
 
   # Detection + parsing, required by both restorers.
   fetch "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth" \
-        "$COMFY_DIR/models/facedetection/detection_Resnet50_Final.pth" \
-        100000000 "detection_Resnet50_Final.pth" || true
+        "$COMFY_DIR/models/facedetection/detection_Resnet50_Final.pth" 100000000 "detection_Resnet50_Final.pth" || true
 
   fetch "https://github.com/xinntao/facexlib/releases/download/v0.2.2/parsing_parsenet.pth" \
-        "$COMFY_DIR/models/facedetection/parsing_parsenet.pth" \
-        50000000 "parsing_parsenet.pth" || true
+        "$COMFY_DIR/models/facedetection/parsing_parsenet.pth" 50000000 "parsing_parsenet.pth" || true
 
-  # Real-ESRGAN, for lifting the swapped clip back to the plate's resolution.
-  # No custom node needed -- ComfyUI ships "Load Upscale Model" and
-  # "Upscale Image (using Model)" natively. ~130MB for both.
+  # Upscalers. ComfyUI ships the nodes natively — weights only.
+  # DreamID-V renders at 480p/720p, so a 1080p plate needs the swap lifted.
   fetch "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth" \
-        "$COMFY_DIR/models/upscale_models/RealESRGAN_x2plus.pth" \
-        50000000 "RealESRGAN_x2plus.pth" || true
+        "$COMFY_DIR/models/upscale_models/RealESRGAN_x2plus.pth" 50000000 "RealESRGAN_x2plus.pth" || true
 
   fetch "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth" \
-        "$COMFY_DIR/models/upscale_models/RealESRGAN_x4plus.pth" \
-        50000000 "RealESRGAN_x4plus.pth" || true
+        "$COMFY_DIR/models/upscale_models/RealESRGAN_x4plus.pth" 50000000 "RealESRGAN_x4plus.pth" || true
+
+  # Sharper on detail than Real-ESRGAN; softer on faces. Worth having both.
+  fetch "https://huggingface.co/lokCX/4x-Ultrasharp/resolve/main/4x-UltraSharp.pth" \
+        "$COMFY_DIR/models/upscale_models/4x-UltraSharp.pth" 50000000 "4x-UltraSharp.pth" || true
+
+  # RIFE frame interpolation — smooth slow-motion without the judder you get
+  # from simply retiming, and frame-rate conversion.
+  fetch "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation/releases/download/models/rife47.pth" \
+        "$COMFY_DIR/custom_nodes/ComfyUI-Frame-Interpolation/ckpts/rife/rife47.pth" \
+        10000000 "rife47.pth" || true
 
   printf '\n'
   ls -lh "$COMFY_DIR"/models/facerestore_models/ \
-         "$COMFY_DIR"/models/facedetection/ \
          "$COMFY_DIR"/models/upscale_models/ 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------------------
+# wan — OPTIONAL. Wan 2.2 Animate, ~20GB on top of everything else.
+#
+# A different tool for the same job as DreamID-V: it regenerates the whole
+# person from a reference image and matches scene lighting, rather than
+# replacing the face region. Better identity from a single photo; slower,
+# pricier, and it can drift on costume detail.
+#
+# Deliberately NOT part of `all` — only run it if you actually want to compare.
+# ----------------------------------------------------------------------------
+
+do_wan() {
+  phase "Wan 2.2 Animate (OPTIONAL, ~20GB)"
+
+  warn "this is ~20GB on top of DreamID-V's 18GB — bandwidth is billed separately"
+  warn "skip unless you specifically want to compare against DreamID-V"
+  printf '\n'
+
+  local avail
+  avail=$(df -BG --output=avail "$WORKSPACE" | tail -1 | tr -dc '0-9')
+  [ "$avail" -ge 45 ] || die "only ${avail}GB free — Wan needs ~45GB headroom."
+
+  export HF_HOME="$WORKSPACE/hf_cache"
+  cd "$COMFY_DIR"
+
+  local repo="Comfy-Org/Wan_2.2_ComfyUI_Repackaged"
+
+  # int8 rather than bf16: roughly half the size, fits 24GB comfortably.
+  hf_get "$repo" split_files/diffusion_models/wan2.2_animate_14B_int8_convrot.safetensors \
+         models/diffusion_models wan2.2_animate_14B_int8.safetensors 8000000000
+
+  hf_get "$repo" split_files/vae/wan_2.1_vae.safetensors \
+         models/vae wan_2.1_vae.safetensors 200000000
+
+  hf_get "$repo" split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors \
+         models/text_encoders umt5_xxl_fp8_scaled.safetensors 5000000000
+
+  # Relight LoRA — matches the inserted character to scene lighting. This is
+  # the thing that makes Animate blend rather than look pasted in.
+  hf_get "$repo" split_files/loras/wan2.2_animate_14B_relight_lora_bf16.safetensors \
+         models/loras wan2.2_animate_relight_lora.safetensors 100000000
+
+  local wrapper="$COMFY_DIR/custom_nodes/ComfyUI-WanVideoWrapper"
+  if [ -d "$wrapper/.git" ]; then
+    ok "WanVideoWrapper already cloned"
+  else
+    step "cloning WanVideoWrapper"
+    if git clone --depth 1 https://github.com/kijai/ComfyUI-WanVideoWrapper "$wrapper" 2>/dev/null; then
+      pip install -q -r "$wrapper/requirements.txt" 2>/dev/null || true
+      ok "WanVideoWrapper"
+    else
+      warn "clone failed — install 'ComfyUI-WanVideoWrapper' from ComfyUI Manager"
+    fi
+  fi
+
+  printf '\n'; df -h "$WORKSPACE" | tail -1
+  warn "restart ComfyUI to load the new nodes: ./setup.sh restart"
 }
 
 # ----------------------------------------------------------------------------
@@ -341,26 +349,20 @@ do_restart() {
   fi
 
   step "waiting for startup"
-  sleep 20
+  sleep 25
 
-  if [ ! -f "$COMFY_LOG" ]; then
-    warn "log not found at $COMFY_LOG — check startup manually"
-    return 0
-  fi
+  [ -f "$COMFY_LOG" ] || { warn "log not found at $COMFY_LOG"; return 0; }
 
-  if grep -q "IMPORT FAILED.*$NODE_NAME" "$COMFY_LOG"; then
+  if grep -q "IMPORT FAILED" "$COMFY_LOG"; then
     printf '\n'
-    grep -iA2 "ModuleNotFoundError" "$COMFY_LOG" | tail -10
+    grep -i "ModuleNotFoundError" "$COMFY_LOG" | tail -5
     printf '\n'
-    die "node failed to import. Install the missing module above, then: ./setup.sh restart"
+    warn "a node failed to import. pip install the missing module above, then:"
+    warn "  ./setup.sh restart"
   fi
 
-  if grep -q "DreamID-V Wrapper.*Loaded" "$COMFY_LOG"; then
-    grep "DreamID-V Wrapper.*Loaded" "$COMFY_LOG" | tail -1
-    ok "node loaded"
-  else
-    warn "no load confirmation in log — inspect: tail -50 $COMFY_LOG"
-  fi
+  grep -E "DreamID-V Wrapper.*Loaded" "$COMFY_LOG" | tail -1 && ok "DreamID-V loaded" \
+    || warn "no DreamID-V load line — check: tail -50 $COMFY_LOG"
 }
 
 # ----------------------------------------------------------------------------
@@ -368,41 +370,48 @@ do_restart() {
 do_all() {
   do_verify
   do_env
-  do_node
+  do_nodes
   do_models
-  do_facerestore
+  do_enhance
   do_restart
 
-  phase "Done"
+  phase "Ready"
   cat <<EOF
-  Tunnel from your machine (note 18188, not 8188):
+  Tunnel from your machine (note 18188, NOT 8188):
 
     ssh -p PORT root@HOST -L 8188:localhost:18188 -t "tmux attach -t work || tmux new -s work"
 
   Then open http://localhost:8188
 
-  Order of work on this box:
+  Installed:
+    DreamID-V          video face swap, no frame flicker
+    VideoHelperSuite   video load/combine + inline player on the output node
+    facerestore_cf     CodeFormer / GFPGAN for source photos
+    Frame-Interpolation RIFE, for smooth slow-motion
+    upscalers          RealESRGAN x2/x4, 4x-UltraSharp
 
-    1. Restore your source photos   FaceRestoreCFWithModel, codeformer,
-                                    fidelity 0.5 and 0.7 -- keep whichever
-                                    still looks like the person
-    2. Swap a 2-second test clip    confirm resolution, VRAM, output format
-    3. Swap the real clips
-    4. Download results, then DESTROY the instance
+  Order of work:
+    1. restore source photos    fidelity 0.5 and 0.7, keep whichever still
+                                looks like the person
+    2. swap a 2s test clip      confirm resolution, VRAM, output format
+    3. swap the real clips
+    4. download, then DESTROY the instance
 
-  Put source images and clips in $COMFY_DIR/input/
+  Optional: ./setup.sh wan      Wan 2.2 Animate, ~20GB more
 
+  Put images and clips in $COMFY_DIR/input/
   Nothing leaves this machine.
 EOF
 }
 
 case "${1:-all}" in
-  all)          do_all ;;
-  verify)       do_verify ;;
-  env)          do_env ;;
-  node)         do_node ;;
-  models)       do_models ;;
-  facerestore)  do_facerestore ;;
-  restart)      do_restart ;;
-  *)            die "unknown phase '$1' (use: all|verify|env|node|models|facerestore|restart)" ;;
+  all)      do_all ;;
+  verify)   do_verify ;;
+  env)      do_env ;;
+  nodes)    do_nodes ;;
+  models)   do_models ;;
+  enhance)  do_enhance ;;
+  wan)      do_wan ;;
+  restart)  do_restart ;;
+  *)        die "unknown phase '$1' (all|verify|env|nodes|models|enhance|wan|restart)" ;;
 esac

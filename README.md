@@ -42,19 +42,30 @@ Roughly 15–25 minutes, mostly the 11 GB text encoder download.
 |---|---|
 | `verify` | Aborts unless torch ≥ 2.4, a GPU is visible, and ≥60 GB is free |
 | `env` | `tmux` + `ffmpeg` + `curl`, sets `HF_HOME`, creates directories |
-| `node` | Clones the DreamID-V wrapper, installs its deps **plus the ones it forgets** |
-| `models` | Downloads the three model files (~18 GB) and applies the required rename |
-| `facerestore` | CodeFormer + GFPGAN for source photos, plus Real-ESRGAN upscalers (~830 MB) |
-| `restart` | `supervisorctl restart comfyui`, then greps the log to confirm the node loaded |
+| `nodes` | Clones all four custom nodes, installs deps **plus the ones they forget** |
+| `models` | DreamID-V weights (~18 GB), with the required rename applied |
+| `enhance` | Face restore, upscalers, RIFE interpolation (~1 GB) |
+| `restart` | `supervisorctl restart comfyui`, then greps the log to confirm nodes loaded |
+| `wan` | **Optional, not in `all`** — Wan 2.2 Animate (~20 GB more) |
 
 Run a single phase if you need to:
 
 ```bash
 ./setup.sh verify
 ./setup.sh models
-./setup.sh facerestore
+./setup.sh enhance
 ./setup.sh restart
 ```
+
+## What gets installed
+
+| | Purpose |
+|---|---|
+| **DreamID-V** | Video face swap — diffusion-based, so no frame-to-frame flicker |
+| **VideoHelperSuite** | Video load/combine, plus the inline player on the output node |
+| **facerestore_cf** | CodeFormer / GFPGAN for cleaning up low-res source photos |
+| **Frame-Interpolation** | RIFE — smooth slow-motion without retiming judder |
+| **Upscalers** | RealESRGAN x2/x4 and 4x-UltraSharp (ComfyUI's nodes are native) |
 
 **Safe to re-run.** Clones and downloads are skipped when already present, with
 file-size checks to catch truncated downloads.
@@ -253,15 +264,32 @@ pipeline runs end to end — resolution, VRAM, output format. A failed
 
 ---
 
+## Wan 2.2 Animate — optional
+
+```bash
+./setup.sh wan
+```
+
+A different tool for the same job. DreamID-V replaces the **face region**;
+Wan Animate **regenerates the whole person** from a reference image and matches
+scene lighting, using a relight LoRA. Better identity from a single photo, but
+slower, pricier, and it can drift on costume detail.
+
+Deliberately excluded from `all` — it's ~20 GB on top of DreamID-V's 18 GB, and
+**vast bills bandwidth separately from the $/hr**. Only run it if you actually
+want the comparison.
+
+Uses the int8 build rather than bf16 — roughly half the size, fits 24 GB
+comfortably.
+
+---
+
 ## Not yet verified
 
-The following are planned but **have not been run**, so treat them as untested:
+Planned but **not run**, so treat as untested:
 
 - **LatentSync 1.6** lip-sync pass (~18 GB VRAM)
-- **VoxCPM2** voice cloning — runs on a local 8 GB laptop, not this box
-- **Real-ESRGAN** upscaling pass
-
-Add them to `setup.sh` once confirmed working, rather than assuming.
+- **VoxCPM2** voice cloning — belongs on a local machine, not this box
 
 > **You may not need lip-sync at all.** DreamID-V preserves the original
 > actor's mouth movements, so keeping the source clip's audio gives you perfect
