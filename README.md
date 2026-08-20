@@ -320,6 +320,27 @@ and right.
 > Worth trying the raw photo on a test clip first. DreamID-V has its own
 > identity encoder and may handle a soft source better than expected.
 
+### When you only have one photo
+
+The model conditions on a *set* of reference views. One image is the weakest
+possible conditioning, and the usual symptom is an output that reads as a
+plausible face but not as **that** person.
+
+```bash
+python scripts/make-refs.py /workspace/ComfyUI/input/friend.jpg
+```
+
+Detects the face with mediapipe and writes four references — tight and wide
+crops, each mirrored — straight into ComfyUI's input dir. Wire them into
+`ImageConcatMulti` in the order printed.
+
+Two scales plus mirroring is what identity encoders see as training
+augmentation, so it beats feeding the same crop four times. It is not as good
+as genuine 3/4 angles, but it is what one photo can give you.
+
+Use `--no-flip` if the person has a distinctive one-sided feature — a mole,
+scar or hair parting — since a mirrored copy teaches the model the wrong side.
+
 ## Upscaling the output
 
 DreamID-V renders at 480p or 720p. If your plate is 1080p, the swapped clip
