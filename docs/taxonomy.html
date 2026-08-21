@@ -1,0 +1,893 @@
+<title>Plates and Seams</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;500&display=swap">
+
+<style>
+/* Palette: calibrated-monitor neutrals with a cool bias, and a desaturated
+   broadcast-bar set for the four media categories. Light is the base; the two
+   dark blocks redefine only tokens. */
+:root {
+  --bg:        #F3F5F6;
+  --surface:   #FFFFFF;
+  --surface-2: #EAEDEF;
+  --ink:       #12171B;
+  --ink-2:     #47535D;
+  --ink-3:     #6F7B85;
+  --rule:      #DBE0E3;
+  --rule-2:    #C4CBD0;
+  --accent:    #106C79;
+
+  --c-video: #106C79;
+  --c-image: #8A6516;
+  --c-3d:    #3A6B41;
+  --c-audio: #7A3A5D;
+  --c-cross: #55606A;
+
+  --shadow: 0 1px 2px rgba(18, 23, 27, .06), 0 8px 24px rgba(18, 23, 27, .05);
+
+  --measure: 68ch;
+  --fs-body: 1.0625rem;
+  --lh-body: 1.68;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:        #0D1013;
+    --surface:   #14181C;
+    --surface-2: #1A2025;
+    --ink:       #E4E8EA;
+    --ink-2:     #98A4AD;
+    --ink-3:     #6B7781;
+    --rule:      #242A30;
+    --rule-2:    #333B42;
+    --accent:    #4FB0BD;
+
+    --c-video: #4FB0BD;
+    --c-image: #D2A04A;
+    --c-3d:    #6DAC74;
+    --c-audio: #BE749D;
+    --c-cross: #88929B;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg:        #0D1013;
+  --surface:   #14181C;
+  --surface-2: #1A2025;
+  --ink:       #E4E8EA;
+  --ink-2:     #98A4AD;
+  --ink-3:     #6B7781;
+  --rule:      #242A30;
+  --rule-2:    #333B42;
+  --accent:    #4FB0BD;
+
+  --c-video: #4FB0BD;
+  --c-image: #D2A04A;
+  --c-3d:    #6DAC74;
+  --c-audio: #BE749D;
+  --c-cross: #88929B;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: var(--accent); color: var(--bg); }
+
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* Frame-strip rule: timeline tick marks, drawn with a gradient rather than
+   markup. Used only where a major part begins. */
+.ticks {
+  height: 9px;
+  background-image: repeating-linear-gradient(
+    to right, var(--rule-2) 0 1px, transparent 1px 9px);
+  opacity: .85;
+}
+
+.page {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 clamp(1.1rem, 4vw, 2.5rem) 6rem;
+}
+
+@media (min-width: 1000px) {
+  .page {
+    grid-template-columns: 208px minmax(0, 1fr);
+    column-gap: 3.5rem;
+  }
+  .rail { display: block; }
+}
+
+/* ---------- rail ---------- */
+
+.rail {
+  display: none;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100vh;
+  overflow-y: auto;
+  padding: 4.5rem 0 3rem;
+  font-family: "Archivo", system-ui, sans-serif;
+  font-size: .8125rem;
+  line-height: 1.45;
+}
+
+.rail ol { list-style: none; margin: 0; padding: 0; display: grid; gap: .1rem; }
+
+.rail a {
+  display: flex;
+  gap: .6rem;
+  align-items: baseline;
+  padding: .3rem .5rem .3rem .55rem;
+  color: var(--ink-2);
+  text-decoration: none;
+  border-left: 2px solid var(--rule);
+  transition: color .15s, border-color .15s;
+}
+.rail a:hover { color: var(--ink); border-left-color: var(--rule-2); }
+.rail .n {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: .6875rem;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- content ---------- */
+
+.content { padding-top: clamp(2.5rem, 7vw, 4.5rem); min-width: 0; }
+
+.eyebrow {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: .6875rem;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin: 0 0 1.1rem;
+}
+
+h1 {
+  font-family: "Archivo", system-ui, sans-serif;
+  font-weight: 700;
+  font-size: clamp(2.25rem, 6vw, 3.4rem);
+  line-height: 1.04;
+  letter-spacing: -.022em;
+  text-wrap: balance;
+  margin: 0 0 1.1rem;
+}
+
+.standfirst {
+  font-size: clamp(1.125rem, 2.4vw, 1.3rem);
+  line-height: 1.5;
+  color: var(--ink-2);
+  max-width: 46ch;
+  margin: 0 0 2.75rem;
+}
+
+h2 {
+  font-family: "Archivo", system-ui, sans-serif;
+  font-weight: 600;
+  font-size: clamp(1.4rem, 3.2vw, 1.85rem);
+  line-height: 1.18;
+  letter-spacing: -.014em;
+  text-wrap: balance;
+  margin: 0 0 .35rem;
+}
+
+h3 {
+  font-family: "Archivo", system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 1.0625rem;
+  letter-spacing: .002em;
+  margin: 0 0 .2rem;
+  color: var(--ink);
+}
+
+section { max-width: var(--measure); }
+section > * + * { margin-top: 1.05rem; }
+section > h2 + p, section > h3 + p { margin-top: .5rem; }
+
+.part {
+  margin-top: 4.25rem;
+  display: grid;
+  gap: 1.6rem;
+  max-width: none;
+}
+.part > section { max-width: var(--measure); }
+.part-head { display: grid; gap: .3rem; max-width: var(--measure); }
+
+p { margin: 0; }
+strong { font-weight: 600; }
+
+/* Category chip — the four media groups carry a consistent hue throughout */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: .6875rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--cat, var(--ink-3));
+}
+.chip::before {
+  content: "";
+  width: 20px; height: 3px;
+  background: var(--cat, var(--ink-3));
+  border-radius: 1px;
+}
+[data-cat="video"] { --cat: var(--c-video); }
+[data-cat="image"] { --cat: var(--c-image); }
+[data-cat="3d"]    { --cat: var(--c-3d); }
+[data-cat="audio"] { --cat: var(--c-audio); }
+[data-cat="cross"] { --cat: var(--c-cross); }
+
+/* ---------- tables ---------- */
+
+.scroll {
+  overflow-x: auto;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--surface);
+  max-width: 100%;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: .9375rem;
+  line-height: 1.5;
+}
+
+th, td {
+  text-align: left;
+  padding: .62rem .9rem;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+tbody tr:last-child td { border-bottom: 0; }
+
+th {
+  font-family: "Archivo", system-ui, sans-serif;
+  font-weight: 600;
+  font-size: .6875rem;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+
+td:first-child { color: var(--ink); }
+td em { color: var(--ink-2); font-style: italic; }
+
+.num { font-variant-numeric: tabular-nums; }
+
+/* Comparison table — the thesis, so it gets the weight */
+.compare th:not(:first-child) { color: var(--ink); font-size: .8125rem; }
+.compare td:first-child,
+.compare th:first-child { color: var(--ink-3); width: 12rem; }
+
+code, .mono {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  font-size: .84em;
+}
+code {
+  background: var(--surface-2);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: .08em .34em;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- callout ---------- */
+
+.note {
+  border-left: 2px solid var(--cat, var(--accent));
+  padding: .1rem 0 .1rem 1.05rem;
+  color: var(--ink-2);
+}
+.note strong { color: var(--ink); }
+
+/* ---------- stage diagram ---------- */
+
+.stages {
+  display: grid;
+  gap: 1px;
+  grid-template-columns: 1fr;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  overflow: hidden;
+}
+@media (min-width: 620px) { .stages { grid-template-columns: repeat(3, 1fr); } }
+
+.stage { background: var(--surface); padding: 1rem 1.05rem 1.1rem; display: grid; gap: .3rem; }
+.stage .k {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: .6875rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.stage .d { font-size: .9375rem; line-height: 1.5; color: var(--ink-2); }
+.stage .w {
+  font-family: "Archivo", system-ui, sans-serif;
+  font-size: .75rem;
+  color: var(--ink-3);
+  margin-top: .2rem;
+}
+
+/* ---------- footer ---------- */
+
+.foot {
+  margin-top: 4.5rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--rule);
+  max-width: var(--measure);
+  color: var(--ink-3);
+  font-size: .875rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
+
+<div class="page">
+
+  <nav class="rail" aria-label="Sections">
+    <ol>
+      <li><a href="#thesis"><span class="n">01</span><span>Creation vs editing</span></a></li>
+      <li><a href="#stages"><span class="n">02</span><span>The three stages</span></a></li>
+      <li><a href="#video"><span class="n">03</span><span>Video</span></a></li>
+      <li><a href="#image"><span class="n">04</span><span>Image</span></a></li>
+      <li><a href="#threed"><span class="n">05</span><span>3D</span></a></li>
+      <li><a href="#audio"><span class="n">06</span><span>Audio</span></a></li>
+      <li><a href="#crosscut"><span class="n">07</span><span>Pre &amp; post</span></a></li>
+      <li><a href="#limits"><span class="n">08</span><span>Constraints</span></a></li>
+      <li><a href="#tools"><span class="n">09</span><span>Tools</span></a></li>
+      <li><a href="#pipelines"><span class="n">10</span><span>Pipelines</span></a></li>
+      <li><a href="#env"><span class="n">11</span><span>Environment</span></a></li>
+    </ol>
+  </nav>
+
+  <main class="content">
+
+    <p class="eyebrow">Reference &middot; AI video, image, 3D, audio</p>
+    <h1>Plates and Seams</h1>
+    <p class="standfirst">A map of what these tools actually do — the distinction that organises
+      everything, and where the difficulty really lives.</p>
+
+    <section>
+      <p>Written to be read once and referred to often. The tool tables go stale.
+        The task structure does not.</p>
+    </section>
+
+    <!-- 01 -->
+    <div class="part" id="thesis">
+      <div class="ticks" aria-hidden="true"></div>
+      <div class="part-head">
+        <p class="eyebrow">01 — The distinction</p>
+        <h2>Creation and editing are different jobs</h2>
+      </div>
+
+      <section>
+        <p>Every model in this space does one of two things.</p>
+        <div class="scroll">
+          <table class="compare">
+            <thead>
+              <tr><th></th><th>Creation</th><th>Editing</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Conditioned on</td><td>A prompt</td><td>Existing footage</td></tr>
+              <tr><td>Produces</td><td>Something that never existed</td><td>A modified version of something real</td></tr>
+              <tr><td>Fails as</td><td><em>Hallucination</em> — wrong physics, drifting identity</td><td><em>Seams</em> — visible boundaries between real and generated</td></tr>
+              <tr><td>Constrained by</td><td>Almost nothing</td><td>The plate</td></tr>
+              <tr><td>Scales with</td><td>Your GPU budget</td><td>Your footage library</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p><strong>Creation is prediction with no anchor.</strong> The model invents lighting,
+          motion, physics and continuity, and gets all of them approximately right — which
+          reads as <em>wrong</em> to an eye trained on reality.</p>
+
+        <p><strong>Editing is prediction with an anchor.</strong> Real footage supplies lighting,
+          lens behaviour, motion blur and physics for free. The model only has to fill a gap
+          consistently.</p>
+
+        <p>This is the same reason retrieval beats a larger model on factual questions: the
+          retrieved content carries information the weights do not have.</p>
+
+        <p class="note"><strong>The consequence:</strong> in editing, the hard problem moves to
+          the <strong>boundary</strong>. Mask edges, resolution mismatch, grain, colour, chunk
+          joins. Almost nothing that goes wrong is the model's fault, and almost every fix
+          lives in pre- or post-processing.</p>
+
+        <p><strong>Creation is not the weaker sibling.</strong> It is the <em>element source</em>
+          — for what cannot be filmed. Impossible camera moves, historical reconstruction, fire,
+          crowds, destruction. The strongest pipeline is generated elements composited into a
+          real plate, not generation replacing the shot.</p>
+      </section>
+    </div>
+
+    <!-- 02 -->
+    <div class="part" id="stages">
+      <div class="ticks" aria-hidden="true"></div>
+      <div class="part-head">
+        <p class="eyebrow">02 — Structure</p>
+        <h2>Every job has three stages</h2>
+        <p>Regardless of medium. Most quality problems are solved in the first and third.</p>
+      </div>
+
+      <section>
+        <div class="stages">
+          <div class="stage">
+            <span class="k">Pre-process</span>
+            <span class="d">Ingest, detect, mask, crop, condition.</span>
+            <span class="w">Determines the ceiling</span>
+          </div>
+          <div class="stage">
+            <span class="k">Process</span>
+            <span class="d">The model — creation or editing.</span>
+            <span class="w">Where beginners spend everything</span>
+          </div>
+          <div class="stage">
+            <span class="k">Post-process</span>
+            <span class="d">Composite, grade, degrade, encode.</span>
+            <span class="w">Determines whether it's believable</span>
+          </div>
+        </div>
+
+        <p>No model recovers information that is not present, so stage one sets the ceiling.
+          A perfect generation composited badly still looks fake, so stage three decides
+          whether anyone believes it.</p>
+
+        <h3>The non-enhancement principle</h3>
+        <p>The giveaway of a manipulated shot is <strong>mismatch</strong>, not softness. A face
+          sharper than the plate around it reads as fake; a face matching the plate's softness
+          does not.</p>
+        <p>So the finishing move is often to <strong>degrade back down</strong> — grain, soften,
+          re-compress. Post-processing is as often about removing quality as adding it.</p>
+      </section>
+    </div>
+
+    <!-- 03 -->
+    <div class="part" id="video">
+      <div class="ticks" aria-hidden="true"></div>
+      <div class="part-head" data-cat="video">
+        <p class="chip">Video</p>
+        <h2>Video tasks</h2>
+      </div>
+
+      <section data-cat="video">
+        <h3>Creation</h3>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Task</th><th>What it is</th><th>Notes</th></tr></thead>
+            <tbody>
+              <tr><td>Text-to-video</td><td>Prompt &rarr; clip</td><td>Weakest grounding, hardest to control</td></tr>
+              <tr><td>Image-to-video</td><td>Still &rarr; motion</td><td>Far more controllable — the still anchors identity and composition</td></tr>
+              <tr><td>Start/end frame</td><td>Two stills &rarr; the motion between</td><td>Strongest control in pure creation</td></tr>
+              <tr><td>Extension</td><td>Continue past the frame window</td><td>Conditions on the last frame — the correct fix for length limits</td></tr>
+              <tr><td>Camera control</td><td>Prescribed camera move</td><td>Orbit, dolly, pan as an explicit parameter</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Editing</h3>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Task</th><th>What it is</th></tr></thead>
+            <tbody>
+              <tr><td>Video-to-video</td><td>Restyle while preserving motion</td></tr>
+              <tr><td>Inpainting</td><td>Replace a masked region across frames — object removal or replacement</td></tr>
+              <tr><td>Outpainting</td><td>Extend beyond the frame borders; change aspect ratio</td></tr>
+              <tr><td>Reference-to-video</td><td>Inject a subject or style from reference images</td></tr>
+              <tr><td>Face swap</td><td>Replace identity, preserve the performance</td></tr>
+              <tr><td>Motion transfer</td><td>Drive a subject with another performance</td></tr>
+              <tr><td>Relight</td><td>Change lighting direction and quality after the fact</td></tr>
+              <tr><td>Track &amp; remove</td><td>Segment, track, fill — the classic VFX cleanup</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Restoration and finishing</h3>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Task</th><th>What it is</th></tr></thead>
+            <tbody>
+              <tr><td>Upscale</td><td>Raise resolution — temporal models beat per-frame ones</td></tr>
+              <tr><td>Restore</td><td>Remove blur, noise, compression artifacts</td></tr>
+              <tr><td>Deflicker</td><td>Suppress frame-to-frame luminance instability</td></tr>
+              <tr><td>Interpolate</td><td>Insert in-between frames — higher fps, or slow motion</td></tr>
+              <tr><td>Stabilise</td><td>Remove unwanted camera shake</td></tr>
+              <tr><td>Colour match</td><td>Make a generated shot sit with its neighbours</td></tr>
+              <tr><td>Grain / degrade</td><td>Deliberately lower quality to match a plate</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- 04 -->
+    <div class="part" id="image">
+      <div class="ticks" aria-hidden="true"></div>
+      <div class="part-head" data-cat="image">
+        <p class="chip">Image</p>
+        <h2>Image tasks</h2>
+      </div>
+
+      <section data-cat="image">
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Task</th><th>What it is</th></tr></thead>
+            <tbody>
+              <tr><td>Text-to-image</td><td>Prompt &rarr; image</td></tr>
+              <tr><td>Controlled generation</td><td>Pose, depth, edge or segmentation conditioning</td></tr>
+              <tr><td>Identity conditioning</td><td>A specific person from one photo, no training</td></tr>
+              <tr><td>LoRA-conditioned</td><td>A specific person, style or object — trained</td></tr>
+              <tr><td>Instruction editing</td><td>“Remove the car” — no mask required</td></tr>
+              <tr><td>Inpaint / outpaint</td><td>Replace a masked region, or extend beyond the frame</td></tr>
+              <tr><td>Multi-image composition</td><td>Combine subjects from several references</td></tr>
+              <tr><td>Relight</td><td>Change lighting after the fact</td></tr>
+              <tr><td>Restore</td><td>Deblur, denoise, colourise, face restore</td></tr>
+              <tr><td>Background removal</td><td>Cut the subject out</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- 05 -->
+    <div class="part" id="threed">
+      <div class="ticks" aria-hidden="true"></div>
+      <div class="part-head" data-cat="3d">
+        <p class="chip">3D</p>
+        <h2>3D tasks</h2>
+      </div>
+
+      <section data-cat="3d">
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Task</th><th>What it is</th></tr></thead>
+            <tbody>
+              <tr><td>Image-to-mesh</td><td>Single photo &rarr; 3D geometry</td></tr>
+              <tr><td>Image-to-splat</td><td>Single photo &rarr; Gaussian splat — view synthesis, not geometry</td></tr>
+              <tr><td>Texture generation</td><td>Paint an untextured mesh</td></tr>
+              <tr><td>Multi-view generation</td><td>Consistent views of one subject from one image</td></tr>
+              <tr><td>Depth / normal estimation</td><td>2.5D data from a flat image</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">3D matters for video work even when you never deliver a model: depth maps
+          and multi-view generation are <strong>conditioning inputs</strong> for controlled video.</p>
+      </section>
+    </div>
+
+    <!-- 06 -->
+    <div class="part" id="audio">
+      <div class="ticks" aria-hidden="true"></div>
+      <div class="part-head" data-cat="audio">
+        <p class="chip">Audio</p>
+        <h2>Audio tasks</h2>
+      </div>
+
+      <section data-cat="audio">
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Task</th><th>What it is</th></tr></thead>
+            <tbody>
+              <tr><td>Text-to-speech</td><td>Script &rarr; voice</td></tr>
+              <tr><td>Voice cloning</td><td>Script &rarr; a <em>specific</em> voice, from a short reference</td></tr>
+              <tr><td>Voice conversion</td><td>Recorded performance &rarr; different voice, timing preserved</td></tr>
+              <tr><td>Music generation</td><td>Prompt &rarr; music</td></tr>
+              <tr><td>Stem separation</td><td>Split a mix into vocals / bass / drums / other</td></tr>
+              <tr><td>Restoration</td><td>Denoise, dereverb, repair</td></tr>
+              <tr><td>Lip sync</td><td>Drive mouth movement from audio — a <em>video</em> task, audio-driven</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note"><strong>Lip sync is often unnecessary.</strong> If a face swap preserves
+          the original mouth movement and you keep the original audio, sync is free. You need it
+          only when replacing the dialogue.</p>
+      </section>
+    </div>
+
+    <!-- 07 -->
+    <div class="part" id="crosscut">
+      <div class="ticks" aria-hidden="true"></div>
+      <div class="part-head" data-cat="cross">
+        <p class="chip">Cross-cutting</p>
+        <h2>Pre- and post-processing</h2>
+        <p>These apply to every medium, and this is where most of the work actually is.</p>
+      </div>
+
+      <section data-cat="cross">
+        <h3>Pre-processing</h3>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Task</th><th>Why it matters</th></tr></thead>
+            <tbody>
+              <tr><td>Ingest / normalise</td><td>Frame rate, colour space, container. Wrong fps ruins everything downstream</td></tr>
+              <tr><td>Frame extraction</td><td>Video &rarr; frames for per-frame work</td></tr>
+              <tr><td>Detection</td><td>Find faces, bodies, objects</td></tr>
+              <tr><td>Segmentation</td><td>Turn a detection into a mask</td></tr>
+              <tr><td>Tracking</td><td>Keep a mask locked across frames — the core of video masking</td></tr>
+              <tr><td>Matting</td><td>Soft-edged alpha, not a binary mask. Hair and motion blur need this</td></tr>
+              <tr><td>Control extraction</td><td>Depth, pose, edges, normals, optical flow</td></tr>
+              <tr><td>Crop / reframe</td><td>Spend your pixels on the subject, not the background</td></tr>
+              <tr><td>Dataset prep</td><td>Crop, caption, balance — for LoRA training</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="note"><strong>The single highest-leverage pre-process is cropping.</strong> Ask
+          what fraction of your pixels is subject. A tight crop at low resolution beats a loose
+          crop at high resolution — more subject detail, more mask resolution, less compute.</p>
+
+        <h3>Post-processing</h3>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Task</th><th>Why it matters</th></tr></thead>
+            <tbody>
+              <tr><td>Compositing</td><td>Put the generated element back into the real plate</td></tr>
+              <tr><td>Edge treatment</td><td>Feather, light wrap, edge blur — where fakeness lives</td></tr>
+              <tr><td>Colour match</td><td>Match the element to the plate</td></tr>
+              <tr><td>Grain match</td><td>Add grain matching the plate's structure</td></tr>
+              <tr><td>Deflicker / stabilise</td><td>Temporal cleanup after generation</td></tr>
+              <tr><td>Chunk joining</td><td>Dissolve or hard-cut between passes</td></tr>
+              <tr><td>Encode</td><td>High-quality intermediate; compress once, at the end</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- 08 -->
+    <div class="part" id="limits">
+      <div class="ticks" aria-hidden="true"></div>
+      <div class="part-head">
+        <p class="eyebrow">08 — Constraints</p>
+        <h2>Properties, not bugs</h2>
+        <p>These are how the current generation of models works. Design around them.</p>
+      </div>
+
+      <section>
+        <h3>The frame window</h3>
+        <p>Video models have a fixed trained length — <span class="mono num">81</span> frames is
+          typical, about 3.4 seconds at 24fps. <strong>This is a training limit, not a memory
+          limit.</strong> More VRAM does not buy longer clips. Longer material needs chunking,
+          extension conditioning, or cutting to shot boundaries.</p>
+
+        <h3>Frame counts of 4n+1</h3>
+        <p>Video VAEs compress time roughly 4&times;, so valid counts are
+          <span class="mono num">41, 61, 81, 101</span>. Other values get padded or rejected, and
+          padded tail frames come back mangled.</p>
+
+        <h3>Dimensions divisible by 16</h3>
+        <p>The VAE downsamples 8&times; and the transformer patches 2&times;.</p>
+
+        <h3>VRAM is a function of the card, not the workflow</h3>
+        <p>Give the runtime room and it keeps everything resident; give it less and it offloads
+          what is not in use. A reported “this used 28&nbsp;GB” means <em>that card allowed
+          28&nbsp;GB</em>, not <em>this job needs 28&nbsp;GB</em>. Read benchmark figures
+          accordingly.</p>
+
+        <h3>Cuts are free seams</h3>
+        <p>If long material contains an edit, split there. No dissolve, no overlap, and each
+          piece may fit in a single pass.</p>
+      </section>
+    </div>
+
+    <!-- 09 -->
+    <div class="part" id="tools">
+      <div class="ticks" aria-hidden="true"></div>
+      <div class="part-head">
+        <p class="eyebrow">09 — Inventory</p>
+        <h2>Tools</h2>
+        <p>Verified reachable at the time of writing. Treat this section as perishable — the task
+          structure above is the durable part.</p>
+      </div>
+
+      <section data-cat="video">
+        <p class="chip">Video — creation and editing</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Tool</th><th>Task</th><th>Where</th></tr></thead>
+            <tbody>
+              <tr><td>Wan 2.1 / 2.2</td><td>The general video foundation — t2v, i2v, extension</td><td><code>kijai/ComfyUI-WanVideoWrapper</code></td></tr>
+              <tr><td>VACE</td><td>Unified editing: reference-to-video, v2v, inpaint, outpaint</td><td>Native nodes</td></tr>
+              <tr><td>Wan-VACE-Prep</td><td>Transitions, extensions, outpainting, less fiddly</td><td><code>stuttlepress/ComfyUI-Wan-VACE-Prep</code></td></tr>
+              <tr><td>Wan Animate</td><td>Regenerates a whole person, matches scene light</td><td><code>kijai/ComfyUI-WanVideoWrapper</code></td></tr>
+              <tr><td>DreamID-V</td><td>Face swap — replaces the face, keeps the performance</td><td><code>TTPlanetPig/Comfyui_DreamID-V_wrapper</code></td></tr>
+              <tr><td>LTX-Video</td><td>Fast generation — prototype here, finish on Wan</td><td>Native nodes</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="chip">Video — restoration</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Tool</th><th>Task</th><th>Where</th></tr></thead>
+            <tbody>
+              <tr><td>SeedVR2</td><td>Diffusion upscale/restore with temporal consistency</td><td><code>numz/ComfyUI-SeedVR2_VideoUpscaler</code></td></tr>
+              <tr><td>RIFE</td><td>Frame interpolation — fps and slow motion</td><td><code>Fannovel16/ComfyUI-Frame-Interpolation</code></td></tr>
+              <tr><td>RealESRGAN</td><td>Per-frame upscale — fast, no temporal awareness</td><td>Native nodes + model files</td></tr>
+              <tr><td>VideoHelperSuite</td><td>Load, combine, preview, encode</td><td><code>Kosinkadink/ComfyUI-VideoHelperSuite</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note"><strong>Order matters.</strong> Restore the real frames <em>first</em>,
+          then interpolate, then encode. Interpolating first propagates artifacts into every
+          frame you invent.</p>
+      </section>
+
+      <section data-cat="image">
+        <p class="chip">Image</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Tool</th><th>Task</th><th>Where</th></tr></thead>
+            <tbody>
+              <tr><td>Qwen-Image-Edit</td><td>Instruction editing, multi-image, text in images</td><td>Native nodes</td></tr>
+              <tr><td>Flux / Flux Kontext</td><td>Generation and editing — faster than Qwen</td><td>Native nodes</td></tr>
+              <tr><td>SDXL</td><td>Older, lighter, enormous LoRA ecosystem</td><td>Native nodes</td></tr>
+              <tr><td>PuLID</td><td>Identity from one photo, no training</td><td><code>cubiq/PuLID_ComfyUI</code></td></tr>
+              <tr><td>controlnet_aux</td><td>Depth, pose, canny, normals, lineart</td><td><code>Fannovel16/comfyui_controlnet_aux</code></td></tr>
+              <tr><td>Inpaint-CropAndStitch</td><td>Inpaint at full res on a crop, stitch back</td><td><code>lquesada/ComfyUI-Inpaint-CropAndStitch</code></td></tr>
+              <tr><td>CodeFormer / GFPGAN</td><td>Face restore</td><td><code>mav-rik/facerestore_cf</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p class="chip">Segmentation, matting, tracking</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Tool</th><th>Task</th><th>Where</th></tr></thead>
+            <tbody>
+              <tr><td>RMBG</td><td>Background removal and segmentation — RMBG-2.0, BiRefNet, BEN2, SAM, SDMatte</td><td><code>1038lab/ComfyUI-RMBG</code></td></tr>
+              <tr><td>SAM2</td><td>Promptable segmentation with video tracking</td><td><code>kijai/ComfyUI-segment-anything-2</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note"><strong>Matting is not segmentation.</strong> Segmentation gives a binary
+          mask. Matting gives soft alpha — necessary for hair, motion blur, and any believable
+          composite.</p>
+      </section>
+
+      <section data-cat="3d">
+        <p class="chip">3D</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Tool</th><th>Task</th><th>Where</th></tr></thead>
+            <tbody>
+              <tr><td>3D-Pack</td><td>Mesh, texture, 3DGS, NeRF; Hunyuan3D, InstantMesh, TripoSR, CRM</td><td><code>MrForExample/ComfyUI-3D-Pack</code></td></tr>
+              <tr><td>TripoSplat</td><td>Single image &rarr; Gaussian splat</td><td>Native support</td></tr>
+              <tr><td>Hunyuan3D-2</td><td>Image &rarr; mesh, then mesh + reference &rarr; textured mesh</td><td>Via 3D-Pack</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section data-cat="audio">
+        <p class="chip">Audio</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Tool</th><th>Task</th><th>Where</th></tr></thead>
+            <tbody>
+              <tr><td>TTS-Audio-Suite</td><td>Multi-engine TTS and voice conversion — RVC, F5-TTS, IndexTTS-2, VibeVoice, Chatterbox, Qwen3-TTS</td><td><code>diodiogod/TTS-Audio-Suite</code></td></tr>
+              <tr><td>Step Audio EditX</td><td>Zero-shot cloning with emotion and style control</td><td><code>Saganaki22/ComfyUI-Step_Audio_EditX_TTS</code></td></tr>
+              <tr><td>audio-separation-nodes</td><td>Stem separation, tempo match, slice</td><td><code>christian-byrne/audio-separation-nodes-comfyui</code></td></tr>
+              <tr><td>ACE-Step</td><td>Music generation</td><td>Native nodes</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- 10 -->
+    <div class="part" id="pipelines">
+      <div class="ticks" aria-hidden="true"></div>
+      <div class="part-head">
+        <p class="eyebrow">10 — Assembly</p>
+        <h2>Choosing a pipeline</h2>
+        <p>Work backwards from the deliverable.</p>
+      </div>
+
+      <section>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Goal</th><th>Pipeline</th></tr></thead>
+            <tbody>
+              <tr><td>Put someone's face in existing footage</td><td>crop &rarr; restore refs &rarr; swap &rarr; composite &rarr; grade</td></tr>
+              <tr><td>Remove an object from a shot</td><td>track &rarr; mask &rarr; inpaint &rarr; grain match</td></tr>
+              <tr><td>Make a shot that was never filmed</td><td>image gen &rarr; i2v &rarr; extend &rarr; restore &rarr; grade</td></tr>
+              <tr><td>Fix bad archival footage</td><td>restore &rarr; interpolate (slow-mo only) &rarr; grade</td></tr>
+              <tr><td>Change what someone says</td><td>swap or lip sync &rarr; voice clone &rarr; mix</td></tr>
+              <tr><td>Turn a photo into a moving asset</td><td>image &rarr; 3D or splat &rarr; render a camera move</td></tr>
+              <tr><td>Match a generated shot to real footage</td><td>colour match &rarr; grain &rarr; <em>degrade</em>, not enhance</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- 11 -->
+    <div class="part" id="env">
+      <div class="ticks" aria-hidden="true"></div>
+      <div class="part-head">
+        <p class="eyebrow">11 — Practice</p>
+        <h2>Environment discipline</h2>
+      </div>
+
+      <section>
+        <p>Every custom node installs into <strong>one shared Python environment</strong>. Node A
+          pins <code>numpy&lt;2</code>, Node B needs <code>numpy&gt;=2</code>, Node C quietly
+          downgrades torch. pip is last-writer-wins and will not warn you.</p>
+
+        <h3>One pipeline, one node set</h3>
+        <p>Five nodes, not fifty. Build a small install per job rather than a universal one.
+          Conflicts scale with what is installed, not with what you use.</p>
+
+        <h3>Use a constraints file</h3>
+        <p>Global pins that no <code>requirements.txt</code> can override. The damage is
+          prevented rather than detected.</p>
+
+        <h3>Rebuild rather than repair</h3>
+        <p>On rented hardware a broken environment costs minutes, not a weekend. This is why
+          ephemeral boxes beat a permanent local install.</p>
+
+        <h3>Disable, don't uninstall</h3>
+        <p>A directory renamed <code>Foo.disabled</code> is skipped at startup. Reversible, and
+          it removes a node as a variable without losing the install.</p>
+      </section>
+    </div>
+
+    <!-- close -->
+    <div class="part">
+      <div class="ticks" aria-hidden="true"></div>
+      <div class="part-head">
+        <p class="eyebrow">Where this is going</p>
+        <h2>Orchestration, not omniscience</h2>
+      </div>
+      <section>
+        <p>The field is converging on <strong>in-context editing</strong> rather than pure
+          text-to-video — the open tools and the closed ones alike. That is the same conclusion
+          this document opens with, arrived at commercially.</p>
+        <p>Expect the interface to become orchestration: describe an intent, and a system
+          decomposes it into a chain of specialist models. Restore &rarr; swap &rarr; upscale
+          &rarr; grade.</p>
+        <p><strong>The chain does not disappear. It gets hidden.</strong> Which is why
+          understanding the chain remains the durable skill — the button changes, the pipeline
+          does not.</p>
+      </section>
+    </div>
+
+    <p class="foot">Companion to <span class="mono">docs/recipes.md</span>, which is the
+      copy-and-run version of everything above.</p>
+
+  </main>
+</div>

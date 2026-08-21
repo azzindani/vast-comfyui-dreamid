@@ -133,3 +133,40 @@ do_wan() {
   printf '\n'; df -h "$WORKSPACE" | tail -1
   warn "restart ComfyUI to load the new nodes: ./setup.sh restart"
 }
+
+# ----------------------------------------------------------------------------
+# Profile models
+# ----------------------------------------------------------------------------
+#
+# A profile declares MODELS as "repo|remote_path|dest_subdir|filename|min_bytes".
+# min_bytes is ~90% of the real size, so a truncated download is caught rather
+# than silently loading a corrupt file.
+#
+# Not every profile needs this: some nodes fetch their own weights on first use.
+# Those profiles declare no MODELS and say so.
+
+do_profile_models() {
+  local entry repo remote dir name min total=0 avail
+  [ "${#MODELS[@]}" -eq 0 ] && {
+    ok "no models to pre-download for this profile"
+    [ -n "${MODELS_NOTE:-}" ] && printf '       %s\n' "$MODELS_NOTE"
+    return 0
+  }
+
+  for entry in "${MODELS[@]}"; do
+    IFS='|' read -r _ _ _ _ min <<<"$entry"
+    total=$(( total + min ))
+  done
+
+  phase "Profile models (~$(( total / 1000000000 )) GB)"
+  avail=$(df -BG --output=avail "$WORKSPACE" | tail -1 | tr -dc '0-9')
+  if [ "$avail" -lt $(( total / 1000000000 + 10 )) ]; then
+    die "need ~$(( total / 1000000000 + 10 ))GB free, have ${avail}GB. Disk is not resizable — start a bigger box."
+  fi
+  warn "vast bills bandwidth per GB — this download is a real charge"
+
+  for entry in "${MODELS[@]}"; do
+    IFS='|' read -r repo remote dir name min <<<"$entry"
+    hf_get "$repo" "$remote" "$COMFY_DIR/$dir" "$name" "$min"
+  done
+}

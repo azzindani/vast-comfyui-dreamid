@@ -205,6 +205,25 @@ is the most likely to fight another profile's pins.
 
 ---
 
+## What a profile downloads
+
+`profile` installs nodes **and** the weights that profile needs, with a disk
+check and a warning first — vast bills bandwidth per GB.
+
+| Profile | Pre-downloaded | Size |
+|---|---|---|
+| `videoedit` | Wan 2.1 VACE 1.3B + encoder + VAE | ~11 GB |
+| `videogen` | Text encoder + VAEs only — pick your own checkpoint | ~8 GB |
+| `restore` | SeedVR2 3B fp8 + VAE | ~4 GB |
+| `faceswap` | via `./setup.sh models` + `enhance` | ~19 GB |
+| `identity` `imageedit` `threed` `audio` | nothing — those nodes fetch weights on first use | — |
+
+**VACE starts at 1.3B on purpose.** The 14B is 34.7 GB and Wan 2.2's fun-vace
+needs *both* noise halves at ~17 GB each. The pipeline is identical either way —
+learn on the small one, then swap the checkpoint.
+
+---
+
 ## Changing things mid-session
 
 You do not have to rebuild to add a tool.

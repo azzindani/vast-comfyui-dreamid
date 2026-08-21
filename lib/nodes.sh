@@ -122,10 +122,12 @@ do_add() {
 
   if [ -f "$REPO_DIR/profiles/$what.conf" ]; then
     phase "Adding profile: $what"
+    MODELS=(); MODELS_NOTE=""
     # shellcheck disable=SC1090
     source "$REPO_DIR/profiles/$what.conf"
     [ -f "$CONSTRAINTS" ] || do_pin
     do_nodes
+    do_profile_models
     do_restart
     return
   fi
@@ -198,11 +200,13 @@ do_profile() {
   phase "Profile: $name"
   sed -n 's/^# *DESC: *//p' "$f" | head -1 | sed 's/^/  /'
 
-  # Profiles set NODES / REQUIRED_NODES / EXTRA_PIP for this run only.
+  # Profiles set NODES / REQUIRED_NODES / EXTRA_PIP / MODELS for this run only.
+  MODELS=(); MODELS_NOTE=""
   # shellcheck disable=SC1090
   source "$f"
 
   [ -f "$CONSTRAINTS" ] || do_pin
   do_nodes
+  do_profile_models
   do_restart
 }
