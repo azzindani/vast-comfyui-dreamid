@@ -1,15 +1,3 @@
-# scratch
-input/
-output/
-tmp/
-*.mp4
-*.mov
-*.jpg
-*.png
-
-# local config — do not commit host/port
-connect.local.ps1
-
-# python
+constraints.txt
 __pycache__/
 *.pyc

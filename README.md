@@ -6,8 +6,14 @@ Rent a box, clone this, run one script. Everything that cost time the first
 time round — the wrong tunnel port, the supervisor conflict, the renamed model
 file, the missing dependencies — is handled here.
 
-Built for AI video editing work: temporally consistent face replacement on
-video clips, with the lip-sync and enhancement passes as planned extensions.
+Built for AI video editing work — face replacement, video editing and
+generation, restoration, image, 3D and audio — each as its own small node set.
+
+| Doc | What it's for |
+|---|---|
+| **[`docs/recipes.md`](docs/recipes.md)** | Copy one block, run it, work. Start here |
+| **[`docs/taxonomy.md`](docs/taxonomy.md)** | What each task *is*, and which tool does it |
+| [`notes/setup-runbook.md`](notes/setup-runbook.md) | The original chronological walkthrough |
 
 ---
 
@@ -49,6 +55,9 @@ Roughly 15–25 minutes, mostly the 11 GB text encoder download.
 | `restart` | `supervisorctl restart comfyui`, then greps the log to confirm nodes loaded |
 | `paths` | Resolves the real input/output dirs, links them to `/workspace`, lists recent renders |
 | `doctor` | **Finds and fixes** missing models and failed imports |
+| `pin` | Writes `constraints.txt` so node installs can't move torch/numpy |
+| `profile <name>` | Installs one pipeline's node set — see [Profiles](#profiles) |
+| `profiles` | Lists available profiles |
 | `wan` | **Optional, not in `all`** — Wan 2.2 Animate (~20 GB more) |
 
 Run a single phase if you need to:
@@ -88,6 +97,50 @@ register at startup.
 
 > If a render is queued or your models are still hot, run `nodes` and keep
 > working. Save `doctor` for a moment when a restart is cheap.
+
+## Profiles
+
+Face swap is one pipeline. This repo carries node sets for the others:
+
+```bash
+./setup.sh profiles              # list them
+./setup.sh profile videoedit     # install that one, then restart
+```
+
+| Profile | For |
+|---|---|
+| `faceswap` | Replace a face in footage, keeping the performance |
+| `videoedit` | Inpaint, object removal, outpaint, restyle real footage |
+| `videogen` | Text-to-video, image-to-video, extension |
+| `restore` | Upscale, restore, retime |
+| `imageedit` | Inpaint, relight, control, restore — images |
+| `identity` | Build reference views of a person from few photos |
+| `threed` | Image to mesh, texture, gaussian splat |
+| `audio` | Voice cloning, TTS, stem separation, music |
+
+Each is **3–6 nodes**, not a universal install. Every custom node lands in one
+shared Python environment, so conflicts scale with what's installed rather than
+what you use. On rented hardware a rebuild costs minutes — which makes a small
+per-job install the cheap option, not the inconvenient one.
+
+### Pinning
+
+```bash
+./setup.sh pin
+```
+
+Writes `constraints.txt` from the current torch/numpy/opencv versions. Node
+requirements are then installed under those pins, so pip **refuses** a
+downgrade instead of silently applying one. When a node conflicts, its
+dependencies are skipped and it says so — one broken node beats a broken
+environment.
+
+`profile` runs this automatically the first time.
+
+> **What each task actually is**, which technique belongs to it, and which tool
+> does it: **[`docs/taxonomy.md`](docs/taxonomy.md)**. Read once, refer to often.
+
+---
 
 ## What gets installed
 
