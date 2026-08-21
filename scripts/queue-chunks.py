@@ -52,22 +52,49 @@ def resolve(wf, node, key):
     return "literal", None, key
 
 
-def probe_frames(video, fps):
-    """Frame count via ffprobe. Returns None if it cannot be determined."""
+def locate(video):
     for d in ("/workspace/ComfyUI/input", os.getcwd()):
         path = video if os.path.isabs(video) else os.path.join(d, video)
         if os.path.isfile(path):
-            break
-    else:
-        return None
+            return path
+    return None
+
+
+def probe_frames(video, force_rate):
+    """(frames, description) for the clip as the loader will see it.
+
+    force_rate resamples on load, so the frame count that matters is
+    duration x force_rate, NOT the source frame count. A 25fps clip loaded at
+    force_rate 24 yields fewer frames than it contains, and planning chunks
+    off the source count sends the last pass past the end of the clip.
+
+    Returns (None, reason) when it cannot be determined.
+    """
+    path = locate(video)
+    if not path:
+        return None, f"{video!r} not found"
     try:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "format=duration", "-of", "csv=p=0", path],
-            capture_output=True, text=True, timeout=30).stdout.strip()
-        return int(float(out) * fps)
-    except Exception:
-        return None
+             "-show_entries", "stream=r_frame_rate,nb_frames:format=duration",
+             "-of", "json", path],
+            capture_output=True, text=True, timeout=30).stdout
+        d = json.loads(out)
+        st = (d.get("streams") or [{}])[0]
+        dur = float(d.get("format", {}).get("duration", 0)) or 0.0
+
+        num, _, den = st.get("r_frame_rate", "0/1").partition("/")
+        src_fps = float(num) / float(den or 1) if float(den or 1) else 0.0
+
+        fps = force_rate if force_rate else src_fps
+        if dur and fps:
+            return round(dur * fps), f"{dur:.2f}s x {fps:g}fps"
+        nb = int(st.get("nb_frames") or 0)
+        if nb:
+            return nb, f"{nb} frames in container"
+        return None, "ffprobe gave no duration or frame count"
+    except Exception as e:
+        return None, f"ffprobe failed: {e}"
 
 
 def plan(total, frames, overlap):
@@ -118,9 +145,23 @@ def main():
         sys.exit(f"{len(loaders)} {LOADER} nodes — this script handles one")
     lid, loader = loaders[0]
 
-    total = args.total or probe_frames(loader["inputs"].get("video", ""), args.fps)
+    video = loader["inputs"].get("video", "")
+    force_rate = loader["inputs"].get("force_rate") or 0
+    if isinstance(force_rate, list):
+        force_rate = 0                       # driven by a link; fall back to source fps
+    probed, why = probe_frames(video, force_rate)
+
+    total = args.total or probed
     if not total:
-        sys.exit("could not determine clip length — pass --total FRAMES")
+        sys.exit(f"could not determine clip length ({why}) — pass --total FRAMES")
+
+    # A --total larger than the clip is the usual reason chunking "does not
+    # work": later passes start past the end and render nothing.
+    if args.total and probed and abs(args.total - probed) > max(2, probed * 0.02):
+        print(f"WARNING   --total {args.total} but the clip measures {probed} ({why})")
+        if args.total > probed:
+            print("          chunks past the end will come back empty or short")
+        print()
 
     starts = plan(total, args.frames, args.overlap)
 
@@ -144,10 +185,23 @@ def main():
     if not outputs:
         print(f"WARNING   no {COMBINE} has save_output enabled — renders will go to temp/")
     print()
+    # Show what each pass actually adds. A chunk contributing a handful of new
+    # frames costs a full render for almost nothing -- better seen than buried.
+    thin = []
     for i, s in enumerate(starts, 1):
         end = min(s + args.frames, total) - 1
-        print(f"  {i}/{len(starts)}  skip={s:<5} frames {s}-{end}")
+        new = min(s + args.frames, total) - (starts[i - 2] + args.frames) if i > 1 \
+              else min(args.frames, total)
+        mark = ""
+        if i > 1 and new < args.frames * 0.25:
+            mark, _ = "  <-- thin", thin.append((i, new))
+        print(f"  {i}/{len(starts)}  skip={s:<5} frames {s}-{end}   +{new} new{mark}")
     print()
+    for i, new in thin:
+        print(f"NOTE      chunk {i} adds only {new} frame(s) for a full render pass;")
+        print(f"          consider --overlap or trimming the clip instead")
+    if thin:
+        print()
 
     if args.dry_run:
         print("dry run — nothing queued")
